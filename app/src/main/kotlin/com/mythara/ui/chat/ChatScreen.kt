@@ -225,6 +225,20 @@ private fun Composer(onSubmit: (String) -> Unit, enabled: Boolean) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        // Mic button — push-to-talk via SpeechRecognizer. Partials stream into
+        // the draft field; final fires submit() so the voice path lands the same
+        // turn as text without a separate "send" tap.
+        MicButton(
+            onPartial = { draft = it },
+            onFinal = {
+                draft = it
+                if (enabled && draft.isNotBlank()) {
+                    onSubmit(draft); draft = ""
+                }
+            },
+            onError = { /* surface later via VM event channel */ },
+        )
+
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -249,7 +263,7 @@ private fun Composer(onSubmit: (String) -> Unit, enabled: Boolean) {
                     Box {
                         if (draft.isEmpty()) {
                             Text(
-                                "ask anything…",
+                                "tap mic or type…",
                                 color = MytharaColors.FgDim,
                                 style = MaterialTheme.typography.bodyMedium,
                             )

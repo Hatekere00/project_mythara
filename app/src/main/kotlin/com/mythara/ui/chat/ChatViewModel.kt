@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.mythara.agent.AgentLoop
 import com.mythara.data.HistoryRepository
 import com.mythara.data.MessageRow
+import com.mythara.mic.Tts
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -29,7 +30,10 @@ import javax.inject.Inject
 class ChatViewModel @Inject constructor(
     private val agent: AgentLoop,
     history: HistoryRepository,
+    private val tts: Tts,
 ) : ViewModel() {
+    init { tts.init() }
+
 
     data class UiState(
         val messages: List<UiMessage> = emptyList(),
@@ -69,8 +73,11 @@ class ChatViewModel @Inject constructor(
                     is AgentLoop.Turn.Delta -> _ui.update {
                         it.copy(streaming = (it.streaming ?: "") + turn.text)
                     }
-                    is AgentLoop.Turn.Finished -> _ui.update {
-                        it.copy(streaming = null, thinking = false)
+                    is AgentLoop.Turn.Finished -> {
+                        _ui.update { it.copy(streaming = null, thinking = false) }
+                        // Speak the assistant reply via native TTS. M3 default;
+                        // a Settings toggle for MiniMax T2A lands later.
+                        tts.speak(turn.finalText)
                     }
                     is AgentLoop.Turn.Error -> _ui.update {
                         it.copy(streaming = null, thinking = false, errorBanner = turn.message)
