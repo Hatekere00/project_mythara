@@ -74,7 +74,7 @@ fun SettingsScreen(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) {
-                Text("${Glyph.Arrow.reversed()} back", color = MytharaColors.FgMute)
+                Text("${Glyph.LeftArrow} back", color = MytharaColors.FgMute)
             }
             Spacer(Modifier.height(1.dp))
             Text(
@@ -218,4 +218,3 @@ private fun RadioRow(label: String, selected: Boolean, onSelect: () -> Unit) {
     }
 }
 
-private fun String.reversed(): String = this.reversed()

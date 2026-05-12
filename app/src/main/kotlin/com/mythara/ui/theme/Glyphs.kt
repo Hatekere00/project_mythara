@@ -19,6 +19,7 @@ object Glyph {
     const val AccentBar         = "▌"   // ▌  vertical accent (active section)
     const val ThinDivider       = "│"   // │  divider, sidebar gutter
     const val Arrow             = "→"   // →  flow indicator
+    const val LeftArrow         = "←"   // ←  back navigation
     const val DescendingArrow   = "⇣"   // ⇣  output / yield arrow
     const val CircleOutline     = "○"   // ○  inactive state
     const val CircleFilled      = "◉"   // ◉  selected radio
