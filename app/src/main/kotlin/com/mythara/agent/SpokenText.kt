@@ -47,6 +47,11 @@ object SpokenText {
         if (input.isBlank()) return ""
         var s = input
 
+        // 0. Drop emoji + emoji-modifier codepoints before any other pass.
+        //    Android TTS otherwise reads their CLDR names ("face with tears
+        //    of joy", "thumbs up sign"); models love sprinkling them.
+        s = stripEmoji(s)
+
         // 1. Drop fenced code blocks wholesale — meaningless to listen to.
         s = CODE_BLOCK.replace(s, " ")
 
@@ -87,4 +92,44 @@ object SpokenText {
 
         return s.trim()
     }
+
+    /**
+     * Removes emoji + emoji-modifier codepoints. Iterates by Unicode
+     * codepoint (not Java `char`) because most emoji live above U+FFFF
+     * and would otherwise be processed as surrogate-pair halves.
+     *
+     * Blocks stripped:
+     *  - 0x1F000–0x1FFFF — most emoji, dingbats supplement, pictographs
+     *  - 0x2600–0x27BF   — misc symbols (☀ ⚠ ★ …) + dingbats (✂ ✈ ❤ …)
+     *  - 0x20D0–0x20FF   — combining marks for symbols (keycap U+20E3)
+     *  - 0xFE00–0xFE0F   — variation selectors (esp. VS-16 emoji presentation)
+     *  - 0x200D          — zero-width joiner (used in emoji sequences)
+     *  - 0xE0020–0xE007F — tag characters (used in flag emoji sequences)
+     *
+     * Preserved (intentionally outside the stripped ranges):
+     *  - ASCII + Latin Extended
+     *  - CJK ideographs (0x4E00–0x9FFF)
+     *  - Arabic / Hebrew / Devanagari / etc.
+     *  - General punctuation (smart quotes, em dashes)
+     *  - Arrows (0x2190–0x21FF — keep → ← ↑ ↓ for natural reading)
+     *  - Geometric shapes (0x25A0–0x25FF — keep ◆ ● ○ for our own glyphs)
+     */
+    private fun stripEmoji(s: String): String {
+        val sb = StringBuilder(s.length)
+        var i = 0
+        while (i < s.length) {
+            val cp = s.codePointAt(i)
+            if (!isEmojiCp(cp)) sb.appendCodePoint(cp)
+            i += Character.charCount(cp)
+        }
+        return sb.toString()
+    }
+
+    private fun isEmojiCp(cp: Int): Boolean =
+        cp in 0x1F000..0x1FFFF ||
+        cp in 0x2600..0x27BF ||
+        cp in 0x20D0..0x20FF ||
+        cp in 0xFE00..0xFE0F ||
+        cp == 0x200D ||
+        cp in 0xE0020..0xE007F
 }
