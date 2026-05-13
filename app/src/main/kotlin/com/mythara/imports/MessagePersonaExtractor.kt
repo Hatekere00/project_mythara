@@ -44,6 +44,7 @@ class MessagePersonaExtractor @Inject constructor(
     private val embedder: LocalEmbedder,
     private val gemma: GemmaExtractor,
     private val userNameStore: com.mythara.data.UserNameStore,
+    private val userAliases: com.mythara.data.UserAliasesStore,
 ) {
     data class Report(
         val ok: Boolean,
@@ -166,37 +167,47 @@ class MessagePersonaExtractor @Inject constructor(
         //        messages to lift contact-specific facts (their
         //        topics, their voice) and store them too.
         if (byContact.isNotEmpty()) {
-            // Identify the user's likely sender name to exclude from
-            // per-contact ingestion. In a 1-on-1 export both parties
-            // show up in byContact — one is the contact, the other is
-            // the user. Ingesting both means creating a "contact"
-            // profile for yourself, which clutters the People screen
-            // and writes mirror-image data twice.
-            val userName = runCatching { userNameStore.name() }.getOrDefault("").trim()
-            val excludeUser: (String) -> Boolean = { candidate ->
-                userName.isNotEmpty() && (
-                    candidate.equals(userName, ignoreCase = true) ||
-                        // Loose match for "Ankur Nair" vs "Ankur" etc.
-                        userName.contains(candidate, ignoreCase = true) ||
-                        candidate.contains(userName, ignoreCase = true)
-                )
+            // Identify which candidates from byContact are actually the
+            // USER (not a real contact). Checks against:
+            //   - the curated alias list (UserAliasesStore — contact-
+            //     picker-populated list of "this is me" names + phones)
+            //   - the legacy single "what should I call you" name
+            //     (UserNameStore)
+            // Either source can match; the alias store wins because
+            // it carries phone digits too (handles raw-number exports).
+            val aliasList = runCatching { userAliases.list() }.getOrDefault(emptyList())
+            val legacyName = runCatching { userNameStore.name() }.getOrDefault("").trim()
+            // Pre-compute which candidates are the user. Suspend lambda
+            // inside filter would require runBlocking; cleaner to walk
+            // the list once with isUserCandidate (which is already
+            // suspend on this caller).
+            val userKeys = HashSet<String>()
+            for ((name, _) in byContact) {
+                val isUser = userAliases.isUserCandidate(name) ||
+                    (legacyName.isNotEmpty() && (
+                        name.equals(legacyName, ignoreCase = true) ||
+                            (legacyName.length >= 3 && name.contains(legacyName, ignoreCase = true)) ||
+                            (name.length >= 3 && legacyName.contains(name, ignoreCase = true))
+                        ))
+                if (isUser) userKeys.add(name)
             }
-            val topContacts = byContact
-                .filterNot { excludeUser(it.first) }
-                .take(MAX_CONTACTS_PER_IMPORT)
+            val filtered = byContact.filterNot { (name, _) -> name in userKeys }
+            val topContacts = filtered.take(MAX_CONTACTS_PER_IMPORT)
             for ((contactName, count) in topContacts) {
                 if (count < MIN_PER_CONTACT_MESSAGES) continue
                 val perContactWritten = ingestContact(source, contactName, messages, now)
                 written += perContactWritten
                 Log.d(TAG, "per-contact ingest for $contactName: $perContactWritten records")
             }
-            if (userName.isBlank()) {
+            if (aliasList.isEmpty() && legacyName.isBlank()) {
                 Log.w(
                     TAG,
-                    "user name not set in Settings — both parties of every 1-on-1 chat will be " +
-                        "ingested as contacts. Set 'what should I call you' in Settings → User Name " +
-                        "so imports can distinguish you from your contacts.",
+                    "no user aliases set — both parties of every 1-on-1 chat will be ingested " +
+                        "as contacts. Open Settings → 'user aliases (this is me)' and pick your " +
+                        "own contact card(s) so imports can distinguish you from your contacts.",
                 )
+            } else {
+                Log.d(TAG, "user-alias filter excluded ${byContact.size - filtered.size} candidates (aliases=${aliasList.size}, legacy=${if (legacyName.isBlank()) "-" else legacyName})")
             }
         }
 

@@ -102,6 +102,9 @@ fun SettingsScreen(
         AutoReplyPrefixPanel()
 
         Spacer(Modifier.height(16.dp))
+        UserAliasesPanel()
+
+        Spacer(Modifier.height(16.dp))
         UserNamePanel()
 
         Spacer(Modifier.height(16.dp))
