@@ -6,6 +6,7 @@ import android.content.Intent
 import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -30,23 +31,56 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.mythara.services.NotificationAutoProcessStore
 import com.mythara.services.NotificationListener
 import com.mythara.ui.theme.Glyph
 import com.mythara.ui.theme.MytharaColors
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+/**
+ * Tiny VM for the auto-process toggle. Lives next to the panel because
+ * it's the only consumer.
+ */
+@HiltViewModel
+class NotificationAutoProcessViewModel @Inject constructor(
+    private val store: NotificationAutoProcessStore,
+) : ViewModel() {
+    val enabled: StateFlow<Boolean> = store.enabledFlow()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), false)
+
+    fun setEnabled(value: Boolean) {
+        viewModelScope.launch { store.setEnabled(value) }
+    }
+}
 
 /**
  * Settings panel for the M5 NotificationListener. Mirrors the
  * AccessibilityPanel shape — runtime-bound flag + system-listed
  * check + deep-link to system settings. Notification access lives
  * under a different system intent action than Accessibility.
+ *
+ * The auto-process toggle below the system-access state controls
+ * whether new notifications get auto-routed through the agent loop
+ * (and read aloud) the moment they arrive.
  */
 @Composable
-fun NotificationAccessPanel() {
+fun NotificationAccessPanel(
+    vm: NotificationAutoProcessViewModel = hiltViewModel(),
+) {
     val ctx = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val runtimeEnabled by NotificationListener.isEnabled.collectAsState()
+    val autoProcess by vm.enabled.collectAsState()
     var listed by remember { mutableStateOf(isNotificationAccessListed(ctx)) }
     LaunchedEffect(lifecycleOwner) {
         val obs = LifecycleEventObserver { _, event ->
@@ -110,6 +144,36 @@ fun NotificationAccessPanel() {
         Spacer(Modifier.height(6.dp))
         Text(
             text = "${Glyph.AccentBar} the system page that opens lets you grant individual apps access to your notifications. Find Mythara, toggle it on, accept the warning. Buffer is in-memory only — notifications never get persisted or synced.",
+            color = MytharaColors.FgDim,
+            style = MaterialTheme.typography.bodySmall,
+        )
+
+        Spacer(Modifier.height(12.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = ready) { vm.setEnabled(!autoProcess) }
+                .padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = if (autoProcess) Glyph.CircleFilled else Glyph.CircleOutline,
+                color = when {
+                    !ready -> MytharaColors.FgDim
+                    autoProcess -> MytharaColors.Charple
+                    else -> MytharaColors.FgMute
+                },
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.padding(end = 8.dp))
+            Text(
+                text = "auto-read new notifications aloud",
+                color = if (ready) MytharaColors.Fg else MytharaColors.FgDim,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+        Text(
+            text = "${Glyph.AccentBar} when on, every new notification (skipping ongoing pings and Mythara's own) is funnelled through the agent — Lumi summarises in ≤15 words and speaks it out. Reply 'NOSURFACE' from the model silently drops noise. Burns MiniMax tokens on every push, so it's off by default.",
             color = MytharaColors.FgDim,
             style = MaterialTheme.typography.bodySmall,
         )

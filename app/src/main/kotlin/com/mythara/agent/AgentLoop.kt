@@ -111,6 +111,26 @@ class AgentLoop @Inject constructor(
             ChatMessage(role = "system", content = rendered)
         }
 
+        // Auto-process notifications mode. When ChatViewModel forwards a
+        // status-bar notification into the agent loop, it prefixes the
+        // user text with `[notif]`. We inject a one-shot system message
+        // that tells the model how to handle it: terse spoken summary
+        // for actionable stuff, single token NOSURFACE for noise.
+        val notifSystem: ChatMessage? = if (userText.startsWith(NOTIF_PREFIX)) {
+            ChatMessage(
+                role = "system",
+                content =
+                    "A phone notification just arrived and you're auto-surfacing it. " +
+                        "If it's actionable or worth the user knowing right now (a real message, a calendar reminder, a delivery update, an alert), " +
+                        "give them a ≤15-word natural spoken summary — they'll hear this read aloud. " +
+                        "If it's just system noise (sync indicators, foreground-service pings, OS updates, generic ads, content the user has already seen), " +
+                        "reply with the single token NOSURFACE and nothing else. " +
+                        "Do not call tools for this turn unless the notification is unclear and a quick read_screen would resolve it.",
+            )
+        } else {
+            null
+        }
+
         val client = MiniMaxClient(apiKey = apiKey, region = snap.region)
         val streaming = StreamingChat(client)
 
@@ -129,9 +149,11 @@ class AgentLoop @Inject constructor(
                     name = row.name,
                 )
             }
-            // Prepend system messages (mood context, then recalled
-            // facts) so MiniMax sees both before persisted chat history.
+            // Prepend system messages (notif triage hint first if any,
+            // then mood context, then recalled facts) so MiniMax sees
+            // every framing layer before persisted chat history.
             val prior: List<ChatMessage> = buildList {
+                if (notifSystem != null) add(notifSystem)
                 if (moodSystem != null) add(moodSystem)
                 if (recallSystem != null) add(recallSystem)
                 addAll(historyMessages)
@@ -241,5 +263,15 @@ class AgentLoop @Inject constructor(
          * broken model from spinning forever on a malformed function call.
          */
         const val MAX_ITERATIONS = 8
+
+        /**
+         * Wire-format marker on the leading user-text line that flips the
+         * agent into "notification triage" mode for this turn. Kept short
+         * because it's part of the persisted chat history.
+         */
+        const val NOTIF_PREFIX = "[notif]"
+
+        /** Sentinel the model returns when a notification isn't worth surfacing. */
+        const val NOSURFACE_TOKEN = "NOSURFACE"
     }
 }

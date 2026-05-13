@@ -4,8 +4,12 @@ import android.app.Notification
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.ConcurrentLinkedDeque
 
@@ -91,10 +95,24 @@ class NotificationListener : NotificationListenerService() {
             subText = subText?.take(MAX_TEXT_LEN),
             ongoing = isOngoing,
         )
-        // Replace any prior entry with the same key (notification updates).
+        // Detect whether this is a *new* notification vs an update to an
+        // existing one (sticky media controls re-post on every track
+        // change, for instance). Update-in-place doesn't fire the
+        // auto-process flow; only genuinely new keys do.
+        val isUpdate = recent.any { it.key == r.key }
         recent.removeIf { it.key == r.key }
         recent.addFirst(r)
         while (recent.size > BUFFER_SIZE) recent.pollLast()
+        // Fan-out for auto-process. We emit even ongoing + self-package
+        // here and let the downstream collector filter — keeps the
+        // service code simple and lets downstream policy evolve without
+        // a service redeploy.
+        if (!isUpdate && r.packageName.isNotEmpty()) {
+            // tryEmit on a BufferOverflow.DROP_OLDEST flow never blocks
+            // and never fails — at worst we drop the oldest pending
+            // event when bursts overrun the 16-slot buffer.
+            _newNotifications.tryEmit(r)
+        }
     }
 
     /** Snapshot the rolling buffer. Most-recent first. Ongoing
@@ -117,5 +135,22 @@ class NotificationListener : NotificationListenerService() {
         // coroutine. ConcurrentLinkedDeque gives us a snapshot-safe
         // iterator without explicit synchronisation.
         private val recent = ConcurrentLinkedDeque<Recent>()
+
+        /**
+         * Fires once per *new* notification (keyed by Android's notif
+         * key — sticky updates of the same key don't refire). Subscribers
+         * apply their own filtering (ongoing, self-package, "auto-process
+         * enabled?" toggle) before acting.
+         *
+         * Buffer size 16 with DROP_OLDEST: a burst of notifications during
+         * a backgrounded period won't crash; the auto-processor catches
+         * up on the most recent few.
+         */
+        private val _newNotifications = MutableSharedFlow<Recent>(
+            replay = 0,
+            extraBufferCapacity = 16,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+        val newNotifications: SharedFlow<Recent> = _newNotifications.asSharedFlow()
     }
 }

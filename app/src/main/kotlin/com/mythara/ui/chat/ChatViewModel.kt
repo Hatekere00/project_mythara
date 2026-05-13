@@ -34,6 +34,8 @@ class ChatViewModel @Inject constructor(
     private val languageDetector: LanguageDetector,
     lumiListenerStore: com.mythara.wake.LumiListenerStore,
     val micBroker: com.mythara.mic.MicBroker,
+    notifAutoProcessStore: com.mythara.services.NotificationAutoProcessStore,
+    @dagger.hilt.android.qualifiers.ApplicationContext private val appCtx: android.content.Context,
 ) : ViewModel() {
     // `_ui` is declared up top so any init block can safely call
     // `_ui.update { ... }` — Kotlin runs property initialisers + init
@@ -61,6 +63,64 @@ class ChatViewModel @Inject constructor(
                 _ui.update { it.copy(speaking = sp) }
             }
         }
+        // Auto-process new phone notifications. Guarded by:
+        //  - the user toggle in Settings → notification access
+        //    (default off; opt-in, since this consumes MiniMax tokens)
+        //  - skip ongoing (media controls, FGS pings) — they're never
+        //    the user-actionable kind
+        //  - skip our own package — Mythara's own FGS notif would
+        //    otherwise loop the agent on itself
+        //  - skip while Lumi is already mid-reply (speaking/thinking)
+        //    to avoid stacking spoken summaries on top of an answer
+        //    the user is already hearing
+        viewModelScope.launch {
+            val selfPkg = appCtx.packageName
+            notifAutoProcessStore.enabledFlow().collect { enabled ->
+                if (!enabled) return@collect
+                // Re-collect newNotifications inside the gated branch
+                // so flipping the toggle off cancels the inner collect.
+                kotlinx.coroutines.coroutineScope {
+                    com.mythara.services.NotificationListener.newNotifications
+                        .collect { r ->
+                            if (r.ongoing) return@collect
+                            if (r.packageName == selfPkg) return@collect
+                            // Drop if we're mid-conversation; the user
+                            // will hear the next notification when Lumi
+                            // is idle. The buffer is dropped here
+                            // intentionally — we don't queue, because
+                            // stacking up summaries while the user is
+                            // talking would make the device feel
+                            // possessed.
+                            val u = _ui.value
+                            if (u.thinking || u.speaking) return@collect
+                            val formatted = formatNotificationForAgent(r) ?: return@collect
+                            submit(formatted)
+                        }
+                }
+            }
+        }
+    }
+
+    private fun formatNotificationForAgent(r: com.mythara.services.NotificationListener.Recent): String? {
+        // Build a compact one-line summary the model can triage. App label
+        // would be nicer than raw package, but resolving it requires a
+        // PackageManager round-trip and we're optimising for "fires fast
+        // when the notification lands" — keep it lean.
+        val title = r.title?.trim().orEmpty()
+        val body = r.text?.trim().orEmpty()
+        val sub = r.subText?.trim().orEmpty()
+        // Drop notifications with no human-readable content — they're
+        // almost certainly silent system pings (sync done, location used).
+        if (title.isEmpty() && body.isEmpty() && sub.isEmpty()) return null
+        val pkg = r.packageName.substringAfterLast('.', r.packageName)
+        val parts = buildString {
+            append(com.mythara.agent.AgentLoop.NOTIF_PREFIX).append(' ')
+            append(pkg)
+            if (title.isNotEmpty()) append(" · ").append(title)
+            if (sub.isNotEmpty()) append(" · ").append(sub)
+            if (body.isNotEmpty()) append(": ").append(body)
+        }
+        return parts
     }
 
     /**
@@ -167,7 +227,16 @@ class ChatViewModel @Inject constructor(
                         val cleaned = Thinks.strip(turn.finalText)
                             .removeSuffix(" [hit max iterations]")
                         val spoken = SpokenText.forSpeech(cleaned)
-                        if (spoken.isNotBlank()) {
+                        // Suppress TTS when the model emitted only the
+                        // NOSURFACE sentinel — this turn was an
+                        // auto-processed notification the model decided
+                        // wasn't worth surfacing. The user shouldn't
+                        // hear anything.
+                        val nosurface = cleaned.trim().equals(
+                            com.mythara.agent.AgentLoop.NOSURFACE_TOKEN,
+                            ignoreCase = true,
+                        )
+                        if (spoken.isNotBlank() && !nosurface) {
                             launch {
                                 val locale = languageDetector.identifyLocale(spoken)
                                 tts.speak(spoken, locale, turn.userMoodTrend)
@@ -197,22 +266,34 @@ class ChatViewModel @Inject constructor(
                 "user" -> items.add(ChatItem.UserText(key = "u:${row.id}", text = row.content.orEmpty()))
                 "assistant" -> {
                     if (!row.content.isNullOrEmpty()) {
-                        // Split on <think>…</think> blocks so reasoning renders
-                        // as its own Crush-styled bubble, separate from the
-                        // assistant's actual reply text.
-                        val segments = Thinks.parse(row.content)
-                        segments.forEachIndexed { idx, seg ->
-                            when (seg) {
-                                is Thinks.Segment.Text -> items.add(
-                                    ChatItem.AssistantText(key = "a:${row.id}:$idx", text = seg.content),
-                                )
-                                is Thinks.Segment.Thought -> items.add(
-                                    ChatItem.Thought(
-                                        key = "t:${row.id}:$idx",
-                                        text = seg.content,
-                                        streaming = !seg.closed,
-                                    ),
-                                )
+                        // Hide NOSURFACE replies entirely — they're the
+                        // model saying "this auto-processed notification
+                        // wasn't worth surfacing", and the corresponding
+                        // user `[notif]` turn is hidden too (handled in
+                        // the `user` branch below).
+                        val stripped = Thinks.strip(row.content).trim()
+                        if (!stripped.equals(
+                                com.mythara.agent.AgentLoop.NOSURFACE_TOKEN,
+                                ignoreCase = true,
+                            )
+                        ) {
+                            // Split on <think>…</think> blocks so reasoning renders
+                            // as its own Crush-styled bubble, separate from the
+                            // assistant's actual reply text.
+                            val segments = Thinks.parse(row.content)
+                            segments.forEachIndexed { idx, seg ->
+                                when (seg) {
+                                    is Thinks.Segment.Text -> items.add(
+                                        ChatItem.AssistantText(key = "a:${row.id}:$idx", text = seg.content),
+                                    )
+                                    is Thinks.Segment.Thought -> items.add(
+                                        ChatItem.Thought(
+                                            key = "t:${row.id}:$idx",
+                                            text = seg.content,
+                                            streaming = !seg.closed,
+                                        ),
+                                    )
+                                }
                             }
                         }
                     }
