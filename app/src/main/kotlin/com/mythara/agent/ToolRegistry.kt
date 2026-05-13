@@ -67,6 +67,7 @@ class ToolRegistry @Inject constructor(
     private val gate: ConfirmationGate,
     private val allowlist: com.mythara.data.AllowlistStore,
     private val confirmationSettings: ConfirmationSettings,
+    private val audit: com.mythara.audit.AuditLogger,
 ) {
     private val tools: List<Tool> = listOf(
         timeTool, batteryTool, webFetchTool,
@@ -142,8 +143,18 @@ class ToolRegistry @Inject constructor(
                 "Mythara/Registry",
                 "redirect $name → $target (model called a deprecated composer name)",
             )
+            audit.logRedirect(fromName = name, toName = target)
         } ?: name
-        val tool = byName[effectiveName] ?: return ToolResult.fail("unknown tool: $name")
+        val tool = byName[effectiveName] ?: run {
+            audit.logToolCall(
+                toolName = name,
+                argsJson = argsJson,
+                ok = false,
+                output = "unknown tool",
+                latencyMs = 0L,
+            )
+            return ToolResult.fail("unknown tool: $name")
+        }
         val args: JsonObject = runCatching {
             MiniMaxClient.json.decodeFromString<JsonObject>(argsJson.ifBlank { "{}" })
         }.getOrElse { JsonObject(emptyMap()) }
@@ -163,6 +174,7 @@ class ToolRegistry @Inject constructor(
                 val req = confirmStub.copy(id = gate.newId(tool.name))
                 val decision = gate.request(req)
                 if (decision == ConfirmationGate.Decision.Deny) {
+                    audit.logUserCanceled(tool.name)
                     return ToolResult.fail(
                         """{"error":"user_canceled","detail":"User declined the confirmation prompt for ${tool.name}."}""",
                     )
@@ -170,8 +182,18 @@ class ToolRegistry @Inject constructor(
             }
         }
 
-        return runCatching { tool.execute(args) }
+        val t0 = System.nanoTime()
+        val result = runCatching { tool.execute(args) }
             .getOrElse { ToolResult.fail(it.message ?: "tool threw ${it.javaClass.simpleName}") }
+        val latencyMs = (System.nanoTime() - t0) / 1_000_000
+        audit.logToolCall(
+            toolName = tool.name,
+            argsJson = argsJson,
+            ok = result.ok,
+            output = result.output,
+            latencyMs = latencyMs,
+        )
+        return result
     }
 
     /** True if the model returned a name we don't have a binding for. */

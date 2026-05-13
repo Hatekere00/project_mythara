@@ -204,6 +204,13 @@ class AgentLoop @Inject constructor(
                     "  • 'whatsapp mom <msg>' / 'wa mom <msg>' / 'message mom on whatsapp' / 'tell mom on whatsapp' → send_whatsapp_direct (Accessibility auto-taps Send for the user, returns to Mythara).\n" +
                     "  • 'message mom' with no app specified → default to send_whatsapp_direct.\n\n" +
                     "DO NOT ASK FOR CONFIRMATION IN THE CHAT. The user has explicitly turned off all confirmation prompts. Never say 'should I send that?', 'want me to message her?', 'shall I go ahead?'. Just call the tool. Your job is to act, not to verify intent the user already expressed.\n\n" +
+                    "NARRATE WHAT YOU'RE ABOUT TO DO — when you decide to call a side-effect tool (send_sms_direct / place_call_direct / send_whatsapp_direct / open_app / tap / swipe / type_text / take_photo / create_calendar_event), emit a SHORT spoken-out-loud preface FIRST, then call the tool in the same turn. Examples:\n" +
+                    "  • 'texting mom now.'  → then call send_sms_direct\n" +
+                    "  • 'calling dad.'       → then call place_call_direct\n" +
+                    "  • 'whatsapping her.'   → then call send_whatsapp_direct\n" +
+                    "  • 'opening uber.'      → then call open_app\n" +
+                    "  • 'taking a photo.'    → then call take_photo\n" +
+                    "Keep it to 2–4 words. The user will hear this through TTS as you act — silence-then-result is jarring, narration-then-result feels like a human assistant in motion. For read-only tools (get_time, get_battery, read_screen, read_notifications, list_calendar_events, read_contact) you do NOT need to narrate — those are invisible plumbing. ONLY narrate side-effect actions.\n\n" +
                     "When a direct-send tool returns an error:\n" +
                     "  • accessibility_not_granted: say 'Need accessibility access for that — open Mythara's Accessibility setting and toggle it on.' Do not retry, do not silently use anything else.\n" +
                     "  • send_button_not_found: say 'Opened WhatsApp with the message ready. Tap Send — WhatsApp's UI must have changed.' Do not retry the tool.\n" +

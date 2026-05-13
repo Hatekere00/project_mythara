@@ -400,6 +400,9 @@ fun SettingsScreen(
         MessageImportPanel()
 
         Spacer(Modifier.height(16.dp))
+        AuditLogPanel()
+
+        Spacer(Modifier.height(16.dp))
         ConfirmationPanel()
 
         Spacer(Modifier.height(16.dp))
