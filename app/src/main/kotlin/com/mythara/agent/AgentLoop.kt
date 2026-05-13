@@ -204,12 +204,19 @@ class AgentLoop @Inject constructor(
                     "  • 'whatsapp mom <msg>' / 'wa mom <msg>' / 'message mom on whatsapp' / 'tell mom on whatsapp' → send_whatsapp_direct (Accessibility auto-taps Send for the user, returns to Mythara).\n" +
                     "  • 'message mom' with no app specified → default to send_whatsapp_direct.\n\n" +
                     "DO NOT ASK FOR CONFIRMATION IN THE CHAT. The user has explicitly turned off all confirmation prompts. Never say 'should I send that?', 'want me to message her?', 'shall I go ahead?'. Just call the tool. Your job is to act, not to verify intent the user already expressed.\n\n" +
+                    "CALENDAR — when the user accepts, confirms, or arranges a meeting / appointment / call ('let's meet at 3', 'sure 4pm works', 'I'll grab coffee with her tomorrow', 'book dentist at 10am Friday'), do BOTH of these without being asked:\n" +
+                    "  (a) First call list_calendar_events for the relevant window to check for conflicts. If anything overlaps, NARRATE the conflict in 1 short sentence and then either propose the nearest free slot or proceed if the user already chose despite it.\n" +
+                    "  (b) Then call create_calendar_event with the right title, start/end epoch-millis (resolve relative times against the temporal-anchor system message), location/description when known. ALWAYS create the event — the user said yes, they don't want to be asked again.\n" +
+                    "When create_calendar_event returns, the result JSON includes calendarName + accountName + verified. If verified=true, confirm by saying which calendar it landed on ('added to your Google calendar'). If verified=false, say so — 'wrote it but it didn't show up — your calendar might not be syncing, check Calendar app'. Never claim success on verified=false.\n" +
+                    "Default duration: 60 minutes when the user doesn't specify. Default reminder: don't set one — the user's calendar already has their preferred default.\n\n" +
                     "NARRATE WHAT YOU'RE ABOUT TO DO — when you decide to call a side-effect tool (send_sms_direct / place_call_direct / send_whatsapp_direct / open_app / tap / swipe / type_text / take_photo / create_calendar_event), emit a SHORT spoken-out-loud preface FIRST, then call the tool in the same turn. Examples:\n" +
                     "  • 'texting mom now.'  → then call send_sms_direct\n" +
                     "  • 'calling dad.'       → then call place_call_direct\n" +
                     "  • 'whatsapping her.'   → then call send_whatsapp_direct\n" +
                     "  • 'opening uber.'      → then call open_app\n" +
                     "  • 'taking a photo.'    → then call take_photo\n" +
+                    "  • 'checking your calendar.' → then call list_calendar_events\n" +
+                    "  • 'booking it in your calendar.' → then call create_calendar_event\n" +
                     "Keep it to 2–4 words. The user will hear this through TTS as you act — silence-then-result is jarring, narration-then-result feels like a human assistant in motion. For read-only tools (get_time, get_battery, read_screen, read_notifications, list_calendar_events, read_contact) you do NOT need to narrate — those are invisible plumbing. ONLY narrate side-effect actions.\n\n" +
                     "When a direct-send tool returns an error:\n" +
                     "  • accessibility_not_granted: say 'Need accessibility access for that — open Mythara's Accessibility setting and toggle it on.' Do not retry, do not silently use anything else.\n" +

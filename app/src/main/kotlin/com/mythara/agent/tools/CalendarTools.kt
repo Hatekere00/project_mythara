@@ -180,13 +180,20 @@ class CreateCalendarEventTool @Inject constructor(
         val eventId: Long?,
         val uri: String?,
         val calendarId: Long?,
+        val calendarName: String? = null,
+        val accountName: String? = null,
+        val accountType: String? = null,
+        /** Round-trip verification — true if the inserted row was found in the Events table afterwards. */
+        val verified: Boolean = false,
     )
 
     override val name: String = "create_calendar_event"
     override val description: String =
         "Add an event to the user's calendar. Times are epoch millis (UTC). " +
             "Use when the user says 'add a meeting tomorrow at 3pm' or 'put dentist on my calendar Friday at 10'. " +
-            "Resolve relative times ('tomorrow', 'next Tuesday') against the user's local time zone before calling."
+            "Resolve relative times ('tomorrow', 'next Tuesday') against the user's local time zone before calling. " +
+            "The response includes which calendar the event landed in (calendarName + accountName) — relay this to the user " +
+            "so they know where to find it. Returns verified=true only when the row is confirmed present after insert."
 
     override val parameters: JsonObject = buildJsonObject {
         put("type", "object")
@@ -226,46 +233,137 @@ class CreateCalendarEventTool @Inject constructor(
         val description = (args["description"] as? JsonPrimitive)?.content
         val allDay = (args["allDay"] as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: false
 
-        val calId = withContext(Dispatchers.IO) { findPrimaryWritableCalendar() }
+        val cal = withContext(Dispatchers.IO) { findPrimaryWritableCalendar() }
             ?: return ToolResult(
                 false,
-                """{"error":"no_writable_calendar","detail":"Couldn't find a writable calendar on this device. Add a Google account or local calendar in the Calendar app."}""",
+                """{"error":"no_writable_calendar","detail":"Couldn't find a writable calendar on this device. Open Google Calendar (or any calendar app), make sure at least one account/calendar is visible + syncing, then retry."}""",
             )
         val tz = TimeZone.getDefault().id
+        // Some sync adapters (notably Google Calendar) require the
+        // ACCOUNT_NAME / ACCOUNT_TYPE to be set on inserted rows so
+        // they can correctly route the event upstream. Without these,
+        // the row lands in the local DB but the sync adapter ignores
+        // it — the event "exists" but never appears in the Calendar
+        // app UI, exactly what the user is hitting. Mirror the values
+        // we read from the picked calendar.
         val values = ContentValues().apply {
-            put(CalendarContract.Events.CALENDAR_ID, calId)
+            put(CalendarContract.Events.CALENDAR_ID, cal.id)
             put(CalendarContract.Events.TITLE, title)
             put(CalendarContract.Events.DTSTART, startMs)
             put(CalendarContract.Events.DTEND, endMs)
             put(CalendarContract.Events.EVENT_TIMEZONE, tz)
+            put(CalendarContract.Events.HAS_ATTENDEE_DATA, 1)
+            put(CalendarContract.Events.STATUS, CalendarContract.Events.STATUS_CONFIRMED)
+            if (cal.accountName != null) put(CalendarContract.Events.ACCOUNT_NAME, cal.accountName)
+            if (cal.accountType != null) put(CalendarContract.Events.ACCOUNT_TYPE, cal.accountType)
             if (location != null) put(CalendarContract.Events.EVENT_LOCATION, location)
             if (description != null) put(CalendarContract.Events.DESCRIPTION, description)
             if (allDay) put(CalendarContract.Events.ALL_DAY, 1)
         }
         val uri = withContext(Dispatchers.IO) {
             runCatching { ctx.contentResolver.insert(CalendarContract.Events.CONTENT_URI, values) }
+                .onFailure { android.util.Log.w(TAG, "calendar insert threw", it) }
                 .getOrNull()
-        } ?: return ToolResult(false, """{"error":"insert_failed"}""")
+        } ?: return ToolResult(false, """{"error":"insert_failed","detail":"contentResolver.insert returned null — see logcat tag Mythara/Cal."}""")
         val eventId = ContentUris.parseId(uri)
+
+        // Verify the row is actually queryable AFTER insert. If the
+        // sync adapter or content provider dropped it for any reason
+        // (missing required field, calendar not syncable, etc.), the
+        // row's gone by the time we look. Report verified=false in
+        // that case so the model tells the user instead of lying about
+        // success.
+        val verified = withContext(Dispatchers.IO) {
+            runCatching {
+                ctx.contentResolver.query(
+                    ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, eventId),
+                    arrayOf(CalendarContract.Events._ID),
+                    null, null, null,
+                )?.use { it.moveToFirst() } == true
+            }.getOrDefault(false)
+        }
+        android.util.Log.d(
+            TAG,
+            "created event id=$eventId verified=$verified cal=${cal.displayName} acct=${cal.accountName}/${cal.accountType}",
+        )
         return ToolResult(
             true,
             JSON.encodeToString(
                 Response.serializer(),
-                Response(ok = true, eventId = eventId, uri = uri.toString(), calendarId = calId),
+                Response(
+                    ok = true,
+                    eventId = eventId,
+                    uri = uri.toString(),
+                    calendarId = cal.id,
+                    calendarName = cal.displayName,
+                    accountName = cal.accountName,
+                    accountType = cal.accountType,
+                    verified = verified,
+                ),
             ),
         )
     }
 
+    private data class CalRow(
+        val id: Long,
+        val displayName: String?,
+        val accountName: String?,
+        val accountType: String?,
+    )
+
     /**
-     * Pick the first locally-writable calendar (ACCESS_LEVEL ≥ OWNER).
-     * On a typical Pixel that's the user's primary Google calendar.
+     * Pick the first writable calendar. Strategy:
+     *   1. Prefer the device's marked-primary calendar (IS_PRIMARY=1).
+     *   2. Then any OWNER-access calendar (Google account, local).
+     *   3. Then CONTRIBUTOR-access (e.g. shared work calendar where
+     *      the user can add events).
+     * VISIBLE=1 + SYNC_EVENTS=1 filter so we never write to a stale
+     * unsubscribed account whose events the user can't see.
      */
-    private fun findPrimaryWritableCalendar(): Long? {
+    private fun findPrimaryWritableCalendar(): CalRow? {
         val projection = arrayOf(
             CalendarContract.Calendars._ID,
+            CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
             CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL,
             CalendarContract.Calendars.VISIBLE,
+            CalendarContract.Calendars.SYNC_EVENTS,
+            CalendarContract.Calendars.ACCOUNT_NAME,
+            CalendarContract.Calendars.ACCOUNT_TYPE,
+            CalendarContract.Calendars.IS_PRIMARY,
         )
+        ctx.contentResolver.query(
+            CalendarContract.Calendars.CONTENT_URI,
+            projection,
+            // VISIBLE so we never write where the user can't see it.
+            // SYNC_EVENTS so we don't write to a calendar that won't
+            // round-trip to the user's Google/Exchange account.
+            "${CalendarContract.Calendars.VISIBLE} = 1 AND ${CalendarContract.Calendars.SYNC_EVENTS} = 1",
+            null,
+            // Primary first; then most-privileged access level; then
+            // alphabetic by display name as a stable tiebreaker.
+            "${CalendarContract.Calendars.IS_PRIMARY} DESC, " +
+                "${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} DESC, " +
+                "${CalendarContract.Calendars.CALENDAR_DISPLAY_NAME} ASC",
+        )?.use { c ->
+            val idIdx = c.getColumnIndexOrThrow(CalendarContract.Calendars._ID)
+            val nameIdx = c.getColumnIndexOrThrow(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME)
+            val accessIdx = c.getColumnIndexOrThrow(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL)
+            val acctNameIdx = c.getColumnIndexOrThrow(CalendarContract.Calendars.ACCOUNT_NAME)
+            val acctTypeIdx = c.getColumnIndexOrThrow(CalendarContract.Calendars.ACCOUNT_TYPE)
+            while (c.moveToNext()) {
+                val access = c.getInt(accessIdx)
+                if (access >= CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR) {
+                    return CalRow(
+                        id = c.getLong(idIdx),
+                        displayName = c.getString(nameIdx),
+                        accountName = c.getString(acctNameIdx),
+                        accountType = c.getString(acctTypeIdx),
+                    )
+                }
+            }
+        }
+        // Fallback path: maybe the user disabled SYNC_EVENTS but still
+        // wants events added. Try again without the sync filter.
         ctx.contentResolver.query(
             CalendarContract.Calendars.CONTENT_URI,
             projection,
@@ -275,10 +373,18 @@ class CreateCalendarEventTool @Inject constructor(
                 "${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} DESC",
         )?.use { c ->
             val idIdx = c.getColumnIndexOrThrow(CalendarContract.Calendars._ID)
+            val nameIdx = c.getColumnIndexOrThrow(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME)
             val accessIdx = c.getColumnIndexOrThrow(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL)
+            val acctNameIdx = c.getColumnIndexOrThrow(CalendarContract.Calendars.ACCOUNT_NAME)
+            val acctTypeIdx = c.getColumnIndexOrThrow(CalendarContract.Calendars.ACCOUNT_TYPE)
             while (c.moveToNext()) {
-                if (c.getInt(accessIdx) >= CalendarContract.Calendars.CAL_ACCESS_OWNER) {
-                    return c.getLong(idIdx)
+                if (c.getInt(accessIdx) >= CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR) {
+                    return CalRow(
+                        id = c.getLong(idIdx),
+                        displayName = c.getString(nameIdx),
+                        accountName = c.getString(acctNameIdx),
+                        accountType = c.getString(acctTypeIdx),
+                    )
                 }
             }
         }
@@ -286,6 +392,7 @@ class CreateCalendarEventTool @Inject constructor(
     }
 
     companion object {
+        private const val TAG = "Mythara/Cal"
         private val JSON = Json { encodeDefaults = false; prettyPrint = false }
     }
 }

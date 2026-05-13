@@ -2,6 +2,7 @@ package com.mythara.ui.settings
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -64,18 +65,35 @@ class AutopilotViewModel @Inject constructor(
 fun AutopilotPanel(vm: AutopilotViewModel = hiltViewModel()) {
     val on by vm.enabled.collectAsState()
 
+    // Border + glyph turn Bok when on so it's instantly findable in
+    // the Settings scroll. Off state is muted so the user sees "this
+    // is a thing but it's currently paused".
+    val borderColor = if (on) MytharaColors.Bok else MytharaColors.SurfaceHigh
+    val titleColor = if (on) MytharaColors.Bok else MytharaColors.FgMute
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .background(MytharaColors.Surface)
-            .border(1.dp, MytharaColors.SurfaceHigh, RoundedCornerShape(10.dp))
+            .border(if (on) 1.5.dp else 1.dp, borderColor, RoundedCornerShape(10.dp))
             .padding(14.dp),
     ) {
-        Text(
-            text = "${Glyph.DiamondOutline} autopilot",
-            style = MaterialTheme.typography.labelLarge.copy(color = MytharaColors.FgMute),
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "${if (on) Glyph.DiamondFilled else Glyph.DiamondOutline} autopilot",
+                style = MaterialTheme.typography.labelLarge.copy(color = titleColor),
+            )
+            Text(
+                text = if (on) "ON" else "OFF",
+                color = if (on) MytharaColors.Bok else MytharaColors.FgMute,
+                style = MaterialTheme.typography.labelLarge,
+            )
+        }
         Spacer(Modifier.height(8.dp))
 
         Row(
@@ -88,9 +106,8 @@ fun AutopilotPanel(vm: AutopilotViewModel = hiltViewModel()) {
                     color = if (on) MytharaColors.Bok else MytharaColors.FgMute,
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                Spacer(Modifier.height(0.dp))
                 Text(
-                    text = "  ${if (on) "autopilot on" else "autopilot off"}",
+                    text = "  tap to turn ${if (on) "off" else "on"}",
                     color = MytharaColors.Fg,
                     style = MaterialTheme.typography.bodyMedium,
                 )
@@ -99,7 +116,7 @@ fun AutopilotPanel(vm: AutopilotViewModel = hiltViewModel()) {
 
         Spacer(Modifier.height(6.dp))
         Text(
-            text = "${Glyph.AccentBar} when on, Lumi responds on her own — wake word, notifications, anything passive — and keeps running in the background and on the lock screen. When off, only explicit taps (mic, typed message) talk to Lumi. The wake-word service and notification listener keep running so flipping autopilot back on is instant.",
+            text = "${Glyph.AccentBar} when ON, Lumi acts on her own — wake word, auto-process notifications, proactively books calendar events when meetings are arranged, fires every other side-effect tool without asking. Keeps running in the background and on the lock screen. When OFF, only explicit taps (mic, typed message) talk to Lumi — the agent goes passive. Services stay alive either way so flipping back on is instant.",
             style = MaterialTheme.typography.bodySmall.copy(color = MytharaColors.FgDim),
         )
     }
