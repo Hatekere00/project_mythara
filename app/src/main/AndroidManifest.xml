@@ -36,6 +36,18 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
 
+    <!-- Read media images — lets the read_recent_chat_image tool query
+         MediaStore for the most-recent image WhatsApp / Telegram / etc.
+         auto-saved to the gallery. Useful when notifications surface
+         only a tiny thumbnail (or none at all on FLAG_SECURE chats);
+         the full-resolution image saved to disk is the only place the
+         agent can actually see what was sent. Runtime-granted via the
+         standard system prompt. Pre-API-33 the legacy READ_EXTERNAL_
+         STORAGE permission below covers the same surface. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
     <!-- Usage stats — what apps the user has been in, for how long,
          when. Required by the persona-building pipeline that watches
          user behaviour and writes traits into Lumi's memory. Special
