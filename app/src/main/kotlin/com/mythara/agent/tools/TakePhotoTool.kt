@@ -2,8 +2,10 @@ package com.mythara.agent.tools
 
 import com.mythara.agent.Tool
 import com.mythara.agent.ToolResult
+import com.mythara.agent.UserMessageContext
 import com.mythara.camera.CameraCapture
 import com.mythara.minimax.VisionService
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -111,6 +113,15 @@ class TakePhotoTool @Inject constructor(
             else -> CameraCapture.Lens.Back
         }
         val promptArg = (args["prompt"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+        // Read the verbatim user request from the coroutine context.
+        // The agent loop installs this via UserMessageContext around
+        // every tool call so we can pass the user's literal words to
+        // the vision model alongside the (possibly paraphrased) prompt
+        // the agent chose. Gemini/VL-01 sees both — better recall on
+        // user-specific questions like "is THIS the part I ordered?".
+        val userText = currentCoroutineContext()[UserMessageContext.Key]
+            ?.text?.trim()?.takeIf { it.isNotEmpty() }
+        val effectivePrompt = buildVisionPrompt(promptArg, userText)
 
         return when (val r = capture.capture(lens)) {
             is CameraCapture.Result.Ok -> {
@@ -122,7 +133,7 @@ class TakePhotoTool @Inject constructor(
                 val visionOutcome = runCatching {
                     vision.describeImage(
                         imageFile = File(r.path),
-                        prompt = promptArg ?: VisionService.DEFAULT_PROMPT,
+                        prompt = effectivePrompt,
                     )
                 }.getOrElse { e ->
                     VisionService.Outcome(
@@ -148,6 +159,26 @@ class TakePhotoTool @Inject constructor(
                 ok = false,
                 output = """{"error":"${r.code}","detail":${JsonPrimitive(r.detail)}}""",
             )
+        }
+    }
+
+    /**
+     * Combine the agent-supplied prompt with the user's verbatim
+     * request when one is available. The vision model sees both —
+     * "User asked: <literal>" followed by "Focus on: <agent's clarifier>"
+     * — so it never loses the user's specific framing even if the
+     * agent's chosen prompt is a paraphrase.
+     *
+     * If neither is set we fall back to [VisionService.DEFAULT_PROMPT].
+     * If only one is set we use it directly without a header.
+     */
+    private fun buildVisionPrompt(agentPrompt: String?, userText: String?): String {
+        return when {
+            userText != null && agentPrompt != null ->
+                "User asked: \"$userText\"\nFocus on: $agentPrompt"
+            userText != null -> "User asked: \"$userText\"\nDescribe what's in this photo, focusing on whatever the user's request implies."
+            agentPrompt != null -> agentPrompt
+            else -> VisionService.DEFAULT_PROMPT
         }
     }
 

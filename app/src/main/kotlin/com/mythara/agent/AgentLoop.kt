@@ -12,6 +12,8 @@ import com.mythara.minimax.models.ToolCall
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.builtins.ListSerializer
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -237,10 +239,16 @@ class AgentLoop @Inject constructor(
 
             // Execute every requested tool sequentially; emit start/end so
             // the UI can render Crush-style ● / ✓ glyphs in real time.
+            // The tool execution is wrapped in [UserMessageContext] so
+            // any tool that wants the user's verbatim words (e.g.
+            // take_photo's vision pass) can read it from the coroutine
+            // context without the agent loop knowing tool-specific details.
             for (call in toolCalls) {
                 emit(Turn.ToolStart(call.id, call.function.name, call.function.arguments))
                 val t0 = System.nanoTime()
-                val result = registry.execute(call.function.name, call.function.arguments)
+                val result = kotlinx.coroutines.withContext(UserMessageContext(userText)) {
+                    registry.execute(call.function.name, call.function.arguments)
+                }
                 val dt = (System.nanoTime() - t0) / 1_000_000
                 history.dao.insert(
                     MessageRow(
@@ -348,6 +356,162 @@ class AgentLoop @Inject constructor(
         return history.filterIndexed { idx, _ -> idx !in toDrop }
     }
 
+    // ------------------------------------------------------------------
+    //  Subagent runtime
+    // ------------------------------------------------------------------
+
+    /**
+     * Final result of a subagent invocation. [text] is the final
+     * assistant message; [iterations] is how many model-tool loops it
+     * burned. [ok] is false when the subagent hit an error (missing API
+     * key, network failure, mapped MiniMax code) — [text] then carries
+     * the human-readable error.
+     */
+    data class SubagentResult(
+        val ok: Boolean,
+        val text: String,
+        val iterations: Int = 0,
+        val toolCalls: Int = 0,
+    )
+
+    /**
+     * Run a self-contained sub-agent for the given task. The subagent:
+     *  - starts with a fresh message context (no chat history)
+     *  - uses the same MiniMax model + tool registry as the main agent
+     *  - does NOT persist to Room history (the parent's turn does)
+     *  - does NOT stream Turn events upward (subagent output is a single
+     *    text result returned to the parent's tool channel)
+     *
+     * Spawned by [com.mythara.agent.tools.SpawnAgentTool]. The depth
+     * guard via [AgentDepth] context element prevents a subagent from
+     * recursively spawning forever — the spawn_agent tool checks
+     * `currentDepth() >= MAX_DEPTH` and refuses.
+     *
+     * Why a separate path from [submit]: the parent loop emits Turn
+     * deltas for streaming UI, persists each iteration to Room, and
+     * threads mood + recall system messages. A subagent does none of
+     * that — it's a "function call with side-effects" the parent
+     * makes to crunch a focused task. Trying to share the same body
+     * adds branching that obscures both flows.
+     */
+    suspend fun runSubagent(
+        task: String,
+        systemPrompt: String? = null,
+        maxIterations: Int = SUBAGENT_MAX_ITERATIONS,
+    ): SubagentResult {
+        val snap = settings.snapshot()
+        val apiKey = snap.apiKey
+        if (apiKey.isNullOrBlank()) {
+            return SubagentResult(ok = false, text = "missing api key", iterations = 0)
+        }
+
+        // Build the subagent's conversation: a focused system prompt
+        // (parent-provided or default) followed by the task as a single
+        // user turn. No mood, no recall — those are conversational
+        // concerns; subagents are task-focused.
+        val effectiveSystem = systemPrompt ?: DEFAULT_SUBAGENT_SYSTEM
+        val messages = mutableListOf(
+            ChatMessage(role = "system", content = effectiveSystem),
+            ChatMessage(role = "user", content = task),
+        )
+
+        val client = MiniMaxClient(apiKey = apiKey, region = snap.region)
+        val streaming = StreamingChat(client)
+
+        var iter = 0
+        var toolCallsExecuted = 0
+        var finalText = ""
+
+        while (iter < maxIterations) {
+            iter++
+
+            val req = ChatRequest(
+                model = snap.model,
+                messages = messages.toList(),
+                tools = registry.apiSchema().takeIf { it.isNotEmpty() },
+                toolChoice = if (registry.apiSchema().isNotEmpty()) "auto" else null,
+                stream = true,
+                reasoningSplit = false,
+            )
+
+            val streamedText = StringBuilder()
+            var toolCalls: List<ToolCall> = emptyList()
+            var finishReason: String? = null
+            var failure: ErrorMapper.Mapped? = null
+
+            streaming.stream(snap.region, req).collect { ev ->
+                when (ev) {
+                    is StreamingChat.StreamEvent.Text -> streamedText.append(ev.delta)
+                    is StreamingChat.StreamEvent.ToolCallsReady -> toolCalls = ev.calls
+                    is StreamingChat.StreamEvent.Done -> finishReason = ev.finishReason
+                    is StreamingChat.StreamEvent.Failure -> failure = ev.mapped
+                }
+            }
+
+            if (failure != null) {
+                return SubagentResult(
+                    ok = false,
+                    text = "subagent failed: ${failure!!.message}",
+                    iterations = iter,
+                    toolCalls = toolCallsExecuted,
+                )
+            }
+
+            val asstText = streamedText.toString()
+            finalText = asstText
+
+            // Append the assistant turn to the subagent's in-memory
+            // history. Subagent messages never touch Room — they live
+            // for the duration of this call only.
+            messages.add(
+                ChatMessage(
+                    role = "assistant",
+                    content = asstText.takeIf { it.isNotEmpty() },
+                    toolCalls = toolCalls.takeIf { it.isNotEmpty() },
+                ),
+            )
+
+            val toolFinish = finishReason == "tool_calls" || finishReason == "tool_use"
+            if (toolCalls.isEmpty() || !toolFinish) {
+                return SubagentResult(
+                    ok = true,
+                    text = Thinks.strip(finalText),
+                    iterations = iter,
+                    toolCalls = toolCallsExecuted,
+                )
+            }
+
+            // Execute each tool call sequentially. Subagents share the
+            // parent's tool registry, so they can read_screen, take_photo,
+            // web_fetch, etc. The depth marker on the coroutine context
+            // is what stops them from spawn_agent-ing recursively.
+            // The subagent's task IS its user message for the purposes
+            // of UserMessageContext — tools downstream see the task as
+            // "what the user is asking about right now".
+            for (call in toolCalls) {
+                val result = kotlinx.coroutines.withContext(UserMessageContext(task)) {
+                    registry.execute(call.function.name, call.function.arguments)
+                }
+                toolCallsExecuted++
+                messages.add(
+                    ChatMessage(
+                        role = "tool",
+                        content = result.output,
+                        toolCallId = call.id,
+                        name = call.function.name,
+                    ),
+                )
+            }
+        }
+
+        return SubagentResult(
+            ok = true,
+            text = Thinks.strip(finalText) + " [hit subagent max iterations]",
+            iterations = iter,
+            toolCalls = toolCallsExecuted,
+        )
+    }
+
     private fun encodeToolCalls(calls: List<ToolCall>): String =
         MiniMaxClient.json.encodeToString(ListSerializer(ToolCall.serializer()), calls)
 
@@ -374,5 +538,70 @@ class AgentLoop @Inject constructor(
 
         /** Sentinel the model returns when a notification isn't worth surfacing. */
         const val NOSURFACE_TOKEN = "NOSURFACE"
+
+        /**
+         * Hard cap on subagent loop iterations. Smaller than the main
+         * agent's [MAX_ITERATIONS] because subagents are meant to be
+         * focused single-task workers — if they're not done in 5
+         * iterations the parent should refine the task.
+         */
+        const val SUBAGENT_MAX_ITERATIONS = 5
+
+        /**
+         * Subagent recursion ceiling. Main agent (depth 0) → subagent
+         * (depth 1) is allowed; nested spawn refuses. Two levels of
+         * delegation is plenty for v1; deeper would muddy attribution
+         * + control flow.
+         */
+        const val SUBAGENT_MAX_DEPTH = 1
+
+        /**
+         * Default system prompt for unscoped subagent invocations.
+         * Caller can override per-call when the task needs different
+         * framing (e.g. "you are a research agent — gather facts and
+         * cite sources").
+         */
+        const val DEFAULT_SUBAGENT_SYSTEM =
+            "You are a focused sub-agent. The main assistant has delegated " +
+                "a specific task to you. Use the available tools as needed, " +
+                "then return a concise, well-structured result. Do not chat " +
+                "with the user — your output goes back to the main assistant. " +
+                "Stay on task; if the task is impossible with the tools you " +
+                "have, return a brief explanation and stop."
     }
+}
+
+/**
+ * Coroutine-context marker tracking how deeply nested the current
+ * agent loop is. The main agent runs at depth 0; a subagent spawned
+ * from it inherits depth 1 via [withContext]. The [SpawnAgentTool]
+ * reads this on each call and refuses when at or above
+ * [AgentLoop.SUBAGENT_MAX_DEPTH].
+ *
+ * Using a coroutine-context element instead of a static counter
+ * keeps the depth correctly scoped across structured concurrency —
+ * cancelling the parent unwinds the depth automatically; multiple
+ * subagents running in parallel each see their own depth.
+ */
+class AgentDepth(val depth: Int) :
+    AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<AgentDepth>
+}
+
+/**
+ * Coroutine-context marker carrying the verbatim user request that
+ * kicked off the current agent turn. Tools that benefit from the
+ * user's literal words (notably [com.mythara.agent.tools.TakePhotoTool]'s
+ * vision pass) read this and weave it into their downstream prompt —
+ * so a request like "what disease does this plant have?" gets passed
+ * intact to Gemini/VL-01 alongside the captured image, instead of the
+ * agent's potentially lossy paraphrase.
+ *
+ * Scoped to each [AgentLoop.submit] turn and each
+ * [AgentLoop.runSubagent] task. Tools that don't read it stay
+ * unaffected.
+ */
+class UserMessageContext(val text: String) :
+    AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<UserMessageContext>
 }

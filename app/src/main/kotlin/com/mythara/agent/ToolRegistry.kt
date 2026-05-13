@@ -12,6 +12,7 @@ import com.mythara.agent.tools.ReadContactTool
 import com.mythara.agent.tools.ReadNotificationsTool
 import com.mythara.agent.tools.ReadScreenTool
 import com.mythara.agent.tools.SmsComposerTool
+import com.mythara.agent.tools.SpawnAgentTool
 import com.mythara.agent.tools.TakePhotoTool
 import com.mythara.agent.tools.TimeTool
 import com.mythara.agent.tools.WebFetchTool
@@ -50,6 +51,7 @@ class ToolRegistry @Inject constructor(
     flashlightTool: FlashlightTool,
     openAppTool: OpenAppTool,
     listAppsTool: ListAppsTool,
+    spawnAgentTool: SpawnAgentTool,
 ) {
     private val tools: List<Tool> = listOf(
         timeTool, batteryTool, webFetchTool,
@@ -58,6 +60,7 @@ class ToolRegistry @Inject constructor(
         listCalendarEventsTool, createCalendarEventTool,
         smsComposerTool, placeCallTool,
         flashlightTool, openAppTool, listAppsTool,
+        spawnAgentTool,
     )
     private val byName: Map<String, Tool> = tools.associateBy { it.name }
 
