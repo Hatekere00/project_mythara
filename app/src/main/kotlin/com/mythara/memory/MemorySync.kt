@@ -65,6 +65,7 @@ class MemorySync @Inject constructor(
     private val favorites: com.mythara.data.FavoritesStore,
     private val userAliases: com.mythara.data.UserAliasesStore,
     private val auditRepo: com.mythara.audit.AuditRepository,
+    private val deviceMessageSync: com.mythara.memory.devices.DeviceMessageSync,
 ) {
     data class Report(
         val ok: Boolean,
@@ -353,6 +354,22 @@ class MemorySync @Inject constructor(
                     client, cfg, "analytics/audit_log.jsonl", body, manifest,
                     "mythara: audit log (${auditEntries.size})", written, skipped,
                 )
+            }
+        }
+
+        // ---- device-to-device messaging (location requests etc.)
+        //      Runs as a side-channel: pushes our pending outbox to
+        //      every recipient's `device_messages/inbox/<id>.jsonl`
+        //      and pulls THIS device's inbox + dispatches handlers.
+        //      Each sync is a full exchange — request + handle in
+        //      one round-trip — so a "where are you?" from device A
+        //      gets answered next time device B syncs.
+        if (cfg.syncLearnings) {
+            val report = runCatching {
+                deviceMessageSync.exchange(client, cfg.owner, cfg.repo, cfg.branch)
+            }.getOrNull()
+            if (report != null) {
+                Log.d(tag, "device-msg exchange: pushed=${report.pushed} pulled=${report.pulled} handled=${report.handled}")
             }
         }
 

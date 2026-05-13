@@ -69,6 +69,7 @@ class ToolRegistry @Inject constructor(
     screenshotViewTool: com.mythara.agent.tools.ScreenshotViewTool,
     pressBackTool: com.mythara.agent.tools.PressBackTool,
     readRecentChatImageTool: com.mythara.agent.tools.ReadRecentChatImageTool,
+    requestRemoteLocationTool: com.mythara.agent.tools.RequestRemoteLocationTool,
     private val gate: ConfirmationGate,
     private val allowlist: com.mythara.data.AllowlistStore,
     private val confirmationSettings: ConfirmationSettings,
@@ -98,6 +99,7 @@ class ToolRegistry @Inject constructor(
         screenshotViewTool,
         pressBackTool,
         readRecentChatImageTool,
+        requestRemoteLocationTool,
     )
     private val byName: Map<String, Tool> = tools.associateBy { it.name }
 
