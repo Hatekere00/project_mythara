@@ -207,6 +207,120 @@ fun SettingsScreen(
         }
 
         Spacer(Modifier.height(16.dp))
+        Panel("elevenlabs voice (optional)") {
+            var elInput by remember { mutableStateOf(state.elevenLabsKey ?: "") }
+            var voiceInput by remember { mutableStateOf(state.elevenLabsVoiceId) }
+            LaunchedEffect(state.elevenLabsKey) { elInput = state.elevenLabsKey.orEmpty() }
+            LaunchedEffect(state.elevenLabsVoiceId) { voiceInput = state.elevenLabsVoiceId }
+
+            OutlinedTextField(
+                value = elInput,
+                onValueChange = { elInput = it },
+                singleLine = true,
+                placeholder = { Text("sk_…", color = MytharaColors.FgDim) },
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = MytharaColors.Fg,
+                    unfocusedTextColor = MytharaColors.Fg,
+                    focusedBorderColor = MytharaColors.Charple,
+                    unfocusedBorderColor = MytharaColors.SurfaceHigh,
+                    cursorColor = MytharaColors.Charple,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = voiceInput,
+                onValueChange = { voiceInput = it },
+                singleLine = true,
+                label = { Text("voice id", color = MytharaColors.FgDim) },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = MytharaColors.Fg,
+                    unfocusedTextColor = MytharaColors.Fg,
+                    focusedBorderColor = MytharaColors.Charple,
+                    unfocusedBorderColor = MytharaColors.SurfaceHigh,
+                    cursorColor = MytharaColors.Charple,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                vm.saveAndValidateElevenLabs(elInput)
+                                vm.setElevenLabsVoiceId(voiceInput)
+                            }
+                        },
+                        enabled = !state.elevenLabsValidating && elInput.isNotBlank(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MytharaColors.Charple,
+                            contentColor = MytharaColors.Fg,
+                        ),
+                    ) {
+                        Text(if (state.elevenLabsValidating) "${Glyph.Ellipsis} validating" else "${Glyph.Check} save & validate")
+                    }
+                    if (!state.elevenLabsKey.isNullOrBlank()) {
+                        Spacer(Modifier.padding(start = 8.dp))
+                        TextButton(onClick = { scope.launch { vm.clearElevenLabsKey() } }) {
+                            Text("${Glyph.Cross} clear", color = MytharaColors.FgMute)
+                        }
+                    }
+                }
+                state.elevenLabsValidation?.let { v ->
+                    val color = if (v.ok) MytharaColors.Julep else MytharaColors.Sriracha
+                    Text(
+                        text = "${if (v.ok) Glyph.Check else Glyph.Cross} ${v.message}",
+                        color = color,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            // Toggle row — only meaningful when a key is set; otherwise
+            // dim it so the user knows what step they're missing.
+            val toggleEnabled = !state.elevenLabsKey.isNullOrBlank()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(
+                    onClick = {
+                        if (toggleEnabled) scope.launch { vm.setUseElevenLabs(!state.useElevenLabs) }
+                    },
+                    enabled = toggleEnabled,
+                ) {
+                    Text(
+                        text = if (state.useElevenLabs) Glyph.CircleFilled else Glyph.CircleOutline,
+                        color = when {
+                            !toggleEnabled -> MytharaColors.FgDim
+                            state.useElevenLabs -> MytharaColors.Charple
+                            else -> MytharaColors.FgMute
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Spacer(Modifier.padding(end = 6.dp))
+                    Text(
+                        text = "use elevenlabs for Lumi's voice",
+                        color = if (toggleEnabled) MytharaColors.Fg else MytharaColors.FgDim,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+            Text(
+                text = "${Glyph.AccentBar} when on, Lumi speaks via the ElevenLabs hosted voice (model eleven_turbo_v2_5) instead of the on-device Android TTS. Get a key at elevenlabs.io/app/settings/api-keys. Default voice id is 'Rachel'; paste any voice id from your account's library. Falls back to Android TTS automatically if a call fails (network down, over quota).",
+                style = MaterialTheme.typography.bodySmall.copy(color = MytharaColors.FgDim),
+                modifier = Modifier.padding(top = 6.dp),
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
         Panel("model") {
             var open by remember { mutableStateOf(false) }
             Box {

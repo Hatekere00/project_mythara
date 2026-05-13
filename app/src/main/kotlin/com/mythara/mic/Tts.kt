@@ -3,7 +3,12 @@ package com.mythara.mic
 import android.content.Context
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import com.mythara.data.SettingsStore
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -22,10 +27,21 @@ import javax.inject.Singleton
  * later when we add the optional MiniMax T2A path.
  */
 @Singleton
-class Tts @Inject constructor(@ApplicationContext private val ctx: Context) {
+class Tts @Inject constructor(
+    @ApplicationContext private val ctx: Context,
+    private val settings: SettingsStore,
+    private val elevenLabs: ElevenLabsTtsService,
+) {
 
     @Volatile private var engine: TextToSpeech? = null
     @Volatile private var ready: Boolean = false
+
+    // Tts is a process-lifetime singleton; we own a SupervisorJob-scoped
+    // scope for the ElevenLabs side path (which is suspending HTTP +
+    // MediaPlayer playback). Use IO so the suspend chain doesn't block
+    // the main thread; speaking-state callbacks marshal back via the
+    // MutableStateFlow which is thread-safe.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
      * Live "TTS is producing audio right now" flag. The chat surface
@@ -86,11 +102,61 @@ class Tts @Inject constructor(@ApplicationContext private val ctx: Context) {
      */
     fun speak(text: String, locale: Locale?, userMoodTrend: String?) {
         if (text.isBlank()) return
+        // ElevenLabs is async (HTTP + MediaPlayer prep); decide once
+        // at speak()-time whether to route there, then either fire off
+        // the suspending coroutine or fall through to the synchronous
+        // Android engine. Fallback path triggers on any of:
+        //   - toggle off
+        //   - key not set
+        //   - empty text after trimming
+        // We don't try the Android engine as a backup if ElevenLabs
+        // fails mid-call — the failure modes are async so reverting
+        // would mean the user hears the same line twice (one half
+        // failed, one half from Android) once the network catches up.
+        scope.launch {
+            val snap = runCatching { settings.snapshot() }.getOrNull()
+            val useEleven = snap?.useElevenLabs == true && !snap.elevenLabsKey.isNullOrBlank()
+            if (useEleven) {
+                speakViaElevenLabs(text, snap!!.elevenLabsKey!!, snap.elevenLabsVoiceId, userMoodTrend)
+            } else {
+                speakViaAndroid(text, locale, userMoodTrend)
+            }
+        }
+    }
+
+    private fun speakViaAndroid(text: String, locale: Locale?, userMoodTrend: String?) {
         if (engine == null) init()
         if (!ready) return
         locale?.let { setLanguageIfSupported(it) }
         applyProsody(userMoodTrend)
         engine?.speak(text, TextToSpeech.QUEUE_ADD, null, UUID.randomUUID().toString())
+    }
+
+    private suspend fun speakViaElevenLabs(
+        text: String,
+        apiKey: String,
+        voiceId: String,
+        userMoodTrend: String?,
+    ) {
+        // Mirror the speaking flag so the chat surface's continuous-mic
+        // loop pauses for the duration of an ElevenLabs utterance the
+        // same way it does for Android TTS. The callbacks fire from
+        // MediaPlayer's main-thread listeners; this thread-safe Flow
+        // update is fine to call from either side.
+        val outcome = elevenLabs.speak(
+            text = text,
+            apiKey = apiKey,
+            voiceId = voiceId,
+            userMoodTrend = userMoodTrend,
+            onStart = { _speaking.value = true },
+            onDone = { _speaking.value = false },
+        )
+        if (!outcome.ok) {
+            // Fallback: synthesize via Android TTS so the user still
+            // hears Lumi even when ElevenLabs is down / over quota.
+            android.util.Log.w("Mythara/Tts", "ElevenLabs failed (${outcome.code}: ${outcome.detail}); falling back to Android TTS")
+            speakViaAndroid(text, locale = null, userMoodTrend = userMoodTrend)
+        }
     }
 
     /**
@@ -126,6 +192,7 @@ class Tts @Inject constructor(@ApplicationContext private val ctx: Context) {
 
     fun stop() {
         engine?.stop()
+        elevenLabs.stop()
         _speaking.value = false
     }
 
@@ -133,6 +200,7 @@ class Tts @Inject constructor(@ApplicationContext private val ctx: Context) {
         engine?.shutdown()
         engine = null
         ready = false
+        elevenLabs.stop()
         _speaking.value = false
     }
 }

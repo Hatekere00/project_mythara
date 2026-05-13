@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Base64
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -48,6 +49,13 @@ class SettingsStore @Inject constructor(
     // Lives in the same Tink-encrypted DataStore as the MiniMax key so
     // it inherits the same Keystore-backed at-rest protection.
     private val keyGeminiKeyEncrypted = stringPreferencesKey("geminiKey.encrypted")
+    // ElevenLabs TTS: optional API key + toggle to route Tts.speak()
+    // through their hosted voice synthesis instead of Android's
+    // built-in TextToSpeech. Key is Tink-AEAD-encrypted like the
+    // other API keys; voice id + toggle are plaintext prefs.
+    private val keyElevenLabsKeyEncrypted = stringPreferencesKey("elevenLabsKey.encrypted")
+    private val keyElevenLabsVoiceId = stringPreferencesKey("elevenLabsVoiceId")
+    private val keyUseElevenLabs = booleanPreferencesKey("useElevenLabs")
 
     private val aead: Aead by lazy {
         AeadConfig.register()
@@ -98,6 +106,44 @@ class SettingsStore @Inject constructor(
         ctx.dataStore.edit { it.remove(keyGeminiKeyEncrypted) }
     }
 
+    // ---------- ElevenLabs ----------
+
+    fun elevenLabsKeyFlow(): Flow<String?> = ctx.dataStore.data.map { prefs ->
+        prefs[keyElevenLabsKeyEncrypted]?.let { tryDecrypt(it) }
+    }
+
+    fun elevenLabsVoiceIdFlow(): Flow<String> = ctx.dataStore.data.map { prefs ->
+        prefs[keyElevenLabsVoiceId] ?: DEFAULT_ELEVEN_LABS_VOICE_ID
+    }
+
+    fun useElevenLabsFlow(): Flow<Boolean> = ctx.dataStore.data.map { prefs ->
+        prefs[keyUseElevenLabs] ?: false
+    }
+
+    suspend fun setElevenLabsKey(plain: String) {
+        if (plain.isBlank()) {
+            ctx.dataStore.edit { it.remove(keyElevenLabsKeyEncrypted) }
+            return
+        }
+        val ct = aead.encrypt(plain.toByteArray(Charsets.UTF_8), null)
+        ctx.dataStore.edit { it[keyElevenLabsKeyEncrypted] = Base64.encodeToString(ct, Base64.NO_WRAP) }
+    }
+
+    suspend fun clearElevenLabsKey() {
+        ctx.dataStore.edit { it.remove(keyElevenLabsKeyEncrypted) }
+    }
+
+    suspend fun setElevenLabsVoiceId(voiceId: String) {
+        val v = voiceId.trim()
+        ctx.dataStore.edit {
+            if (v.isBlank()) it.remove(keyElevenLabsVoiceId) else it[keyElevenLabsVoiceId] = v
+        }
+    }
+
+    suspend fun setUseElevenLabs(value: Boolean) {
+        ctx.dataStore.edit { it[keyUseElevenLabs] = value }
+    }
+
     suspend fun setRegion(region: Region) {
         ctx.dataStore.edit { it[keyRegion] = region.name }
     }
@@ -114,6 +160,9 @@ class SettingsStore @Inject constructor(
             region = Region.fromId(prefs[keyRegion]),
             model = prefs[keyModel] ?: DEFAULT_MODEL,
             geminiKey = prefs[keyGeminiKeyEncrypted]?.let { tryDecrypt(it) },
+            elevenLabsKey = prefs[keyElevenLabsKeyEncrypted]?.let { tryDecrypt(it) },
+            elevenLabsVoiceId = prefs[keyElevenLabsVoiceId] ?: DEFAULT_ELEVEN_LABS_VOICE_ID,
+            useElevenLabs = prefs[keyUseElevenLabs] ?: false,
         )
     }
 
@@ -128,6 +177,12 @@ class SettingsStore @Inject constructor(
         val model: String,
         /** Optional Gemini vision key. Null means we fall back to MiniMax-VL-01. */
         val geminiKey: String? = null,
+        /** Optional ElevenLabs TTS key. Null disables the ElevenLabs route. */
+        val elevenLabsKey: String? = null,
+        /** ElevenLabs voice id; defaults to a stock voice if unset. */
+        val elevenLabsVoiceId: String = DEFAULT_ELEVEN_LABS_VOICE_ID,
+        /** When true AND key is set, Tts.speak routes through ElevenLabs. */
+        val useElevenLabs: Boolean = false,
     )
 
     companion object {
@@ -153,5 +208,13 @@ class SettingsStore @Inject constructor(
             "MiniMax-M2.1",
             "MiniMax-M2.1-highspeed",
         )
+
+        /**
+         * Default ElevenLabs voice id — "Rachel", their long-standing
+         * stock voice that's available on the free tier. Users can
+         * pick a different voice id (any from their /v1/voices list)
+         * via Settings.
+         */
+        const val DEFAULT_ELEVEN_LABS_VOICE_ID: String = "21m00Tcm4TlvDq8ikWAM"
     }
 }

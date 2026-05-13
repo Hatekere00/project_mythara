@@ -3,6 +3,7 @@ package com.mythara.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mythara.data.SettingsStore
+import com.mythara.mic.ElevenLabsTtsService
 import com.mythara.minimax.ApiException
 import com.mythara.minimax.GeminiVisionService
 import com.mythara.minimax.MiniMaxClient
@@ -19,6 +20,7 @@ import javax.inject.Inject
 class SettingsViewModel @Inject constructor(
     private val store: SettingsStore,
     private val gemini: GeminiVisionService,
+    private val elevenLabs: ElevenLabsTtsService,
 ) : ViewModel() {
 
     data class State(
@@ -32,6 +34,12 @@ class SettingsViewModel @Inject constructor(
         val geminiKey: String? = null,
         val geminiValidating: Boolean = false,
         val geminiValidation: ValidationResult? = null,
+        // ElevenLabs TTS key + toggle + voice id.
+        val elevenLabsKey: String? = null,
+        val elevenLabsVoiceId: String = SettingsStore.DEFAULT_ELEVEN_LABS_VOICE_ID,
+        val useElevenLabs: Boolean = false,
+        val elevenLabsValidating: Boolean = false,
+        val elevenLabsValidation: ValidationResult? = null,
     )
 
     data class ValidationResult(val ok: Boolean, val message: String)
@@ -48,6 +56,9 @@ class SettingsViewModel @Inject constructor(
                     apiKey = snap.apiKey,
                     model = snap.model,
                     geminiKey = snap.geminiKey,
+                    elevenLabsKey = snap.elevenLabsKey,
+                    elevenLabsVoiceId = snap.elevenLabsVoiceId,
+                    useElevenLabs = snap.useElevenLabs,
                 )
             }
         }
@@ -104,5 +115,46 @@ class SettingsViewModel @Inject constructor(
     suspend fun clearGeminiKey() {
         store.clearGeminiKey()
         _state.update { it.copy(geminiKey = null, geminiValidation = null) }
+    }
+
+    // ---------- ElevenLabs ----------
+
+    suspend fun saveAndValidateElevenLabs(plainKey: String) {
+        val trimmed = plainKey.trim()
+        if (trimmed.isBlank()) return
+        store.setElevenLabsKey(trimmed)
+        _state.update { it.copy(elevenLabsKey = trimmed, elevenLabsValidating = true, elevenLabsValidation = null) }
+        val outcome = runCatching { elevenLabs.validate(trimmed) }.getOrElse {
+            com.mythara.mic.ElevenLabsTtsService.Outcome(false, it.message ?: "validation failed", "threw")
+        }
+        _state.update {
+            it.copy(
+                elevenLabsValidating = false,
+                elevenLabsValidation = ValidationResult(
+                    ok = outcome.ok,
+                    message = outcome.detail ?: if (outcome.ok) "key OK" else "validation failed",
+                ),
+            )
+        }
+    }
+
+    suspend fun clearElevenLabsKey() {
+        store.clearElevenLabsKey()
+        store.setUseElevenLabs(false)
+        _state.update { it.copy(elevenLabsKey = null, elevenLabsValidation = null, useElevenLabs = false) }
+    }
+
+    suspend fun setElevenLabsVoiceId(voiceId: String) {
+        store.setElevenLabsVoiceId(voiceId)
+        _state.update {
+            it.copy(
+                elevenLabsVoiceId = voiceId.ifBlank { SettingsStore.DEFAULT_ELEVEN_LABS_VOICE_ID },
+            )
+        }
+    }
+
+    suspend fun setUseElevenLabs(value: Boolean) {
+        store.setUseElevenLabs(value)
+        _state.update { it.copy(useElevenLabs = value) }
     }
 }
