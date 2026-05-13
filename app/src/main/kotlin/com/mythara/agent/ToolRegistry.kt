@@ -64,6 +64,7 @@ class ToolRegistry @Inject constructor(
     runSkillTool: com.mythara.agent.tools.RunSkillTool,
     private val gate: ConfirmationGate,
     private val allowlist: com.mythara.data.AllowlistStore,
+    private val confirmationSettings: ConfirmationSettings,
 ) {
     private val tools: List<Tool> = listOf(
         timeTool, batteryTool, webFetchTool,
@@ -116,9 +117,16 @@ class ToolRegistry @Inject constructor(
 
         val confirmStub = tool.confirmationFor(args)
         if (confirmStub != null) {
+            // Three short-circuit conditions:
+            // (a) Global "always confirm" toggle is OFF → user has
+            //     opted out of the dialog, fire silently.
+            // (b) Allowlist contains the per-call key → user said
+            //     "always allow this" on a prior prompt, fire silently.
+            // Otherwise pop the gate.
+            val alwaysConfirm = confirmationSettings.alwaysConfirm()
             val allowKey = confirmStub.allowlistKey
             val preAuthorized = allowKey != null && allowlist.isAllowed(allowKey)
-            if (!preAuthorized) {
+            if (alwaysConfirm && !preAuthorized) {
                 val req = confirmStub.copy(id = gate.newId(tool.name))
                 val decision = gate.request(req)
                 if (decision == ConfirmationGate.Decision.Deny) {
