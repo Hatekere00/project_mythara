@@ -73,12 +73,17 @@ class ToolRegistry @Inject constructor(
         readScreenTool, readNotificationsTool, takePhotoTool,
         getLocationTool, readContactTool,
         listCalendarEventsTool, createCalendarEventTool,
-        smsComposerTool, placeCallTool,
+        // Composer variants (smsComposerTool, placeCallTool,
+        // sendWhatsAppTool) intentionally NOT registered — the user
+        // explicitly chose direct-send semantics and the model was
+        // still occasionally picking the composer path. Removing them
+        // from the registry makes that impossible: the only way to
+        // send/call/whatsapp now is direct.
         flashlightTool, openAppTool, listAppsTool,
         spawnAgentTool,
         smsDirectTool, placeCallDirectTool,
         tapTool, swipeTool, typeTextTool,
-        sendWhatsAppTool, sendWhatsAppDirectTool,
+        sendWhatsAppDirectTool,
         listDismissedNotificationsTool,
         listSkillsTool, getSkillTool, saveSkillTool, runSkillTool,
     )

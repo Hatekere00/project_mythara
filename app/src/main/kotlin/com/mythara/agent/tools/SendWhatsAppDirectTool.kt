@@ -3,6 +3,7 @@ package com.mythara.agent.tools
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import com.mythara.agent.ConfirmationGate
 import com.mythara.agent.Tool
 import com.mythara.agent.ToolResult
@@ -130,8 +131,10 @@ class SendWhatsAppDirectTool @Inject constructor(
             setPackage(WHATSAPP_PACKAGE)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
+        Log.d(TAG, "launching WhatsApp for $phoneDigits (body ${body.length} chars)")
         val launched = runCatching { ctx.startActivity(intent) }.isSuccess
         if (!launched) {
+            Log.w(TAG, "whatsapp:// scheme failed, retrying via wa.me HTTPS")
             // Fallback to wa.me HTTPS URL (still resolves to WhatsApp
             // via Android's intent picker when installed).
             val webIntent = Intent(Intent.ACTION_VIEW).apply {
@@ -139,6 +142,7 @@ class SendWhatsAppDirectTool @Inject constructor(
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             if (!runCatching { ctx.startActivity(webIntent) }.isSuccess) {
+                Log.w(TAG, "wa.me launch also failed — WhatsApp not installed?")
                 return ToolResult(false, """{"error":"whatsapp_unavailable","detail":"Couldn't open WhatsApp. Is it installed?"}""")
             }
         }
@@ -150,41 +154,48 @@ class SendWhatsAppDirectTool @Inject constructor(
         //    devices, warm WhatsApp resolves in ~400ms.
         delay(INITIAL_WAIT_MS)
 
-        // 3. Poll for the send button across an array of selectors.
-        //    WhatsApp's content-description for the send icon has
-        //    shifted over versions ("Send", "send", "Send button",
-        //    "Send message"); the underlying view-id has been
-        //    "send" for a long time but is package-prefixed
-        //    "com.whatsapp:id/send" which our tapNodeWithId handles.
-        //    Polling up to MAX_WAIT_MS gives us ~10 attempts.
-        val sendSelectors = listOf<suspend () -> Boolean>(
-            { service.tapNodeWithId("send") },
-            { service.tapNodeWithDesc("Send") },
-            { service.tapNodeWithDesc("send") },
-            { service.tapNodeWithDesc("Send button") },
-            { service.tapNodeWithDesc("Send message") },
-            { service.tapNodeWithDesc("Send messages") },
+        // 3. Poll for the send button. WhatsApp's send-button labels
+        //    drift across releases — id "send" has been stable for
+        //    years, content-descriptions have rotated through "Send",
+        //    "send", "Send message", "Send button", "Send messages".
+        //    Newer builds also start labelling with the actual recipient
+        //    name (e.g. "Send to Mom"). We try a wide net AND log every
+        //    attempt so user-side failures can be diagnosed from logcat.
+        val sendSelectors = listOf<Pair<String, suspend () -> Boolean>>(
+            "id:send" to { service.tapNodeWithId("send") },
+            "id:send_button" to { service.tapNodeWithId("send_button") },
+            "desc:Send" to { service.tapNodeWithDesc("Send") },
+            "desc:send" to { service.tapNodeWithDesc("send") },
+            "desc:Send button" to { service.tapNodeWithDesc("Send button") },
+            "desc:Send message" to { service.tapNodeWithDesc("Send message") },
+            "desc:Send messages" to { service.tapNodeWithDesc("Send messages") },
+            // Localised variants seen in the wild.
+            "desc:Enviar" to { service.tapNodeWithDesc("Enviar") },
+            "desc:Envoyer" to { service.tapNodeWithDesc("Envoyer") },
+            // Newer builds tag the send arrow with the recipient name.
+            "desc:Send to" to { service.tapNodeWithDesc("Send to") },
         )
         var sent = false
+        var hitSelector: String? = null
         val deadline = System.currentTimeMillis() + MAX_WAIT_MS
+        var attempts = 0
         outer@ while (System.currentTimeMillis() < deadline) {
-            for (selector in sendSelectors) {
+            attempts++
+            for ((label, selector) in sendSelectors) {
                 if (runCatching { selector() }.getOrDefault(false)) {
                     sent = true
+                    hitSelector = label
+                    Log.d(TAG, "send button hit on '$label' after $attempts attempts")
                     break@outer
                 }
             }
             delay(POLL_INTERVAL_MS)
         }
         if (!sent) {
-            // Couldn't find the send button after polling. Leave
-            // the user inside WhatsApp with the message ready and
-            // return a structured error so the agent surfaces it
-            // clearly rather than saying "done" when nothing was
-            // actually sent.
+            Log.w(TAG, "send button NOT found after $attempts attempts over ${MAX_WAIT_MS}ms — UI must have changed")
             return ToolResult(
                 ok = false,
-                output = """{"error":"send_button_not_found","detail":"Opened WhatsApp with the message pre-filled, but couldn't auto-tap Send (WhatsApp's UI may have changed). Tap Send manually — the message is ready."}""",
+                output = """{"error":"send_button_not_found","detail":"Opened WhatsApp with the message pre-filled, but couldn't auto-tap Send after $attempts attempts. WhatsApp's UI may have changed — tap Send manually this time."}""",
             )
         }
 
@@ -200,6 +211,7 @@ class SendWhatsAppDirectTool @Inject constructor(
     }
 
     companion object {
+        private const val TAG = "Mythara/WA"
         private const val WHATSAPP_PACKAGE = "com.whatsapp"
         private const val PREVIEW_CHARS = 160
         /** Short wait before we start polling — gives the activity a moment to draw. */
