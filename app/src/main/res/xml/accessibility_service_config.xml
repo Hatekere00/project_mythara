@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Mythara PhoneControlAccessibilityService configuration.
+
+    canRetrieveWindowContent — required for `read_screen`, lets us walk
+        the AccessibilityNodeInfo tree of whatever the user is looking at.
+    canPerformGestures — required for the M6 automation tools (tap,
+        swipe, etc.). Declared up-front so the user grants both at the
+        same toggle — granting accessibility twice would be awkward UX.
+    flagReportViewIds — surfaces R.id resource names in node info, which
+        helps disambiguate buttons that share text labels.
+    flagDefault — the standard event delivery model.
+
+    Event types are deliberately broad so the service stays current when
+    the foreground app changes. We don't actually subscribe to events
+    today — the service is a snapshot-on-demand source — but TYPE_WINDOW_*
+    events keep the system happy and the service node-info cache fresh.
+
+    notificationTimeout — 100ms is the standard for non-IME-style
+    accessibility services that snapshot rather than stream.
+-->
+<accessibility-service
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowContentChanged|typeWindowStateChanged|typeViewClicked|typeViewFocused"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault|flagReportViewIds|flagIncludeNotImportantViews"
+    android:canPerformGestures="true"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/accessibility_service_description"
+    android:notificationTimeout="100"
+    android:settingsActivity="com.mythara.MainActivity" />
