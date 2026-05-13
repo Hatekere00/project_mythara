@@ -4,6 +4,10 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
+import com.mythara.secret.observe.speaker.EnrolledSpeaker
+import com.mythara.secret.observe.speaker.SpeakerDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -12,23 +16,52 @@ import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
 @Database(
-    entities = [LearningEntity::class],
-    version = 1,
+    entities = [LearningEntity::class, EnrolledSpeaker::class],
+    version = 2,
     exportSchema = false,
 )
 abstract class LearningVaultDb : RoomDatabase() {
     abstract fun learnings(): LearningDao
+    abstract fun speakers(): SpeakerDao
 
     companion object {
         const val DATABASE_NAME = "mythara_learning_vault.db"
+
+        /**
+         * v1 → v2: add the `enrolled_speakers` table for M8.4 speaker
+         * identification. Adds a new table only — existing learnings
+         * survive the migration, which matters because real users
+         * already have weeks of Observe transcripts in there.
+         */
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `enrolled_speakers` (
+                        `id` TEXT NOT NULL PRIMARY KEY,
+                        `name` TEXT NOT NULL,
+                        `ref_vector_bytes` BLOB NOT NULL,
+                        `ref_vector_dim` INTEGER NOT NULL,
+                        `enrolled_at_ms` INTEGER NOT NULL,
+                        `last_matched_at_ms` INTEGER NOT NULL,
+                        `match_count` INTEGER NOT NULL,
+                        `enrollment_sample_count` INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_enrolled_speakers_name` ON `enrolled_speakers` (`name`)",
+                )
+            }
+        }
     }
 }
 
 /**
  * Hilt wiring for the vault. v1 uses plain Room (no SQLCipher); the
  * database file lives in the app's private data directory which is
- * already sandboxed by Android. SQLCipher will land in M8.2.2 once
- * the Gemma extractor is in place and the threat model warrants it.
+ * already sandboxed by Android. SQLCipher will land in a future
+ * milestone once the threat model warrants it.
  */
 @Module
 @InstallIn(SingletonComponent::class)
@@ -37,13 +70,18 @@ object LearningVaultModule {
     @Singleton
     fun provideLearningVaultDb(@ApplicationContext ctx: Context): LearningVaultDb =
         Room.databaseBuilder(ctx, LearningVaultDb::class.java, LearningVaultDb.DATABASE_NAME)
-            // Falling back to destructive migration is fine pre-M9 — there
-            // are no production installs of Mythara yet. Post-ship we'll
-            // need real migrations.
+            .addMigrations(LearningVaultDb.MIGRATION_1_2)
+            // Belt-and-braces: if a hand-rolled migration ever lands in a
+            // future version-bump and trips over a corner case, drop and
+            // recreate. Acceptable pre-public-release.
             .fallbackToDestructiveMigration()
             .build()
 
     @Provides
     @Singleton
     fun provideLearningDao(db: LearningVaultDb): LearningDao = db.learnings()
+
+    @Provides
+    @Singleton
+    fun provideSpeakerDao(db: LearningVaultDb): SpeakerDao = db.speakers()
 }

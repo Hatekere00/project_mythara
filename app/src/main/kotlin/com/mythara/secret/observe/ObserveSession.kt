@@ -8,6 +8,7 @@ import com.mythara.secret.observe.embed.EmbeddingsModelStore
 import com.mythara.secret.observe.embed.LocalEmbedder
 import com.mythara.secret.observe.extract.LearningExtractor
 import com.mythara.secret.observe.extract.LumiNoteDetector
+import com.mythara.secret.observe.speaker.SpeakerVault
 import com.mythara.secret.observe.vault.LearningVault
 import com.mythara.secret.observe.vosk.VoskAsr
 import kotlinx.coroutines.CoroutineScope
@@ -56,6 +57,7 @@ class ObserveSession @Inject constructor(
     private val vault: LearningVault,
     private val extractor: LearningExtractor,
     private val journal: LearningJournal,
+    private val speakerVault: SpeakerVault,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
@@ -94,17 +96,21 @@ class ObserveSession @Inject constructor(
                     if (n <= 0) continue
                     val isFinal = recognizer.acceptWaveForm(buf, n)
                     if (isFinal) {
-                        val text = asr.parseText(recognizer.result)
+                        val resultJson = recognizer.result
+                        val text = asr.parseText(resultJson)
                         if (text.isNotBlank()) {
-                            writeTranscript(transcriptsDir, text)
+                            val spkVec = asr.parseSpk(resultJson)
+                            writeTranscript(transcriptsDir, text, spkVec)
                             transcriptCount += 1
                         }
                     }
                 }
                 // Drain final result on graceful stop.
-                val tail = asr.parseText(recognizer.finalResult)
+                val tailJson = recognizer.finalResult
+                val tail = asr.parseText(tailJson)
                 if (tail.isNotBlank()) {
-                    writeTranscript(transcriptsDir, tail)
+                    val tailSpk = asr.parseSpk(tailJson)
+                    writeTranscript(transcriptsDir, tail, tailSpk)
                     transcriptCount += 1
                 }
             } catch (t: Throwable) {
@@ -129,8 +135,27 @@ class ObserveSession @Inject constructor(
         job = null
     }
 
-    private suspend fun writeTranscript(dir: File, text: String) {
+    private suspend fun writeTranscript(dir: File, text: String, spkVec: FloatArray? = null) {
         val now = System.currentTimeMillis()
+
+        // Speaker ID: if Vosk emitted an x-vector for this utterance AND
+        // we have any enrolled speakers, find the best match. The
+        // resulting facet (when present) gets attached to every record
+        // we create from this transcript — the working-tier transcript
+        // itself, all explicit-note records, and all Gemma/heuristic
+        // semantic extractions. That way memory recall queries like
+        // "what did Sarah say about her trip" can filter by speaker.
+        val matched = if (spkVec != null) {
+            runCatching { speakerVault.matchBest(spkVec) }.getOrNull()
+        } else null
+        val speakerFacet = matched?.let { "speaker:${it.speaker.name}" }
+        if (matched != null) {
+            speakerVault.recordMatch(matched.speaker.id, now)
+            Log.d(
+                TAG,
+                "tagged transcript as speaker:${matched.speaker.name} (sim=${matched.similarity})",
+            )
+        }
         val base = ISO_FMT.format(Date(now))
         val txtFile = File(dir, "$base.txt")
         runCatching { txtFile.writeText(text, Charsets.UTF_8) }
@@ -157,11 +182,15 @@ class ObserveSession @Inject constructor(
         // 1. Working-tier record holding the raw transcript text + its
         //    embedding. Stays local; never synced (see MemorySync filter).
         val refId = "transcript:$base"
+        val transcriptFacets = buildList {
+            add("kind:transcript")
+            if (speakerFacet != null) add(speakerFacet)
+        }
         vault.add(
             content = text,
             tier = Tier.Working,
             src = "observe:vosk",
-            facets = listOf("kind:transcript"),
+            facets = transcriptFacets,
             embedding = transcriptEmbedding,
             embModel = embModelId,
             ref = refId,
@@ -181,14 +210,16 @@ class ObserveSession @Inject constructor(
             val noteEmbedding = if (embedder.isReady()) {
                 runCatching { embedder.embed(noteText) }.getOrNull()
             } else null
+            val noteFacets = buildList {
+                add("kind:explicit-note")
+                add("addressed:lumi")
+                if (speakerFacet != null) add(speakerFacet)
+            }
             val added = vault.add(
                 content = noteText,
                 tier = Tier.Semantic,
                 src = "observe:note-to-lumi",
-                facets = listOf(
-                    "kind:explicit-note",
-                    "addressed:lumi",
-                ),
+                facets = noteFacets,
                 embedding = noteEmbedding,
                 embModel = if (noteEmbedding != null) EmbeddingsModelStore.MODEL_ID else null,
                 ref = refId,
@@ -208,11 +239,12 @@ class ObserveSession @Inject constructor(
             val factEmbedding = if (embedder.isReady()) {
                 runCatching { embedder.embed(fact.content) }.getOrNull()
             } else null
+            val factFacets = if (speakerFacet != null) fact.facets + speakerFacet else fact.facets
             val added = vault.add(
                 content = fact.content,
                 tier = Tier.Semantic,
                 src = "extract:heuristic",
-                facets = fact.facets,
+                facets = factFacets,
                 embedding = factEmbedding,
                 embModel = if (factEmbedding != null) EmbeddingsModelStore.MODEL_ID else null,
                 ref = refId,

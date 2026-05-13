@@ -4,6 +4,7 @@ import android.util.Log
 import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
+import org.vosk.SpeakerModel
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -19,10 +20,15 @@ import javax.inject.Singleton
  * constructor.
  */
 @Singleton
-class VoskAsr @Inject constructor(private val store: VoskModelStore) {
+class VoskAsr @Inject constructor(
+    private val store: VoskModelStore,
+    private val speakerStore: SpeakerModelStore,
+) {
 
     @Volatile private var model: Model? = null
     @Volatile private var loadedPath: String? = null
+    @Volatile private var speakerModel: SpeakerModel? = null
+    @Volatile private var speakerModelPath: String? = null
 
     /**
      * Loads the model for the **currently-active language**. If the active
@@ -48,17 +54,55 @@ class VoskAsr @Inject constructor(private val store: VoskModelStore) {
 
     fun isReady(): Boolean = store.isActiveReady()
 
-    /** Fresh recognizer for one session. Caller must close() when done. */
+    /**
+     * Lazy-load the speaker model. Cached after first load like the
+     * language model. Returns null when the speaker model isn't on
+     * disk yet (user hasn't tapped "download" in Secret Settings).
+     */
+    @Synchronized
+    private fun ensureSpeakerModel(): SpeakerModel? {
+        val path = speakerStore.pathOrNull() ?: return null
+        val current = speakerModel
+        if (current != null && speakerModelPath == path) return current
+        runCatching { current?.close() }
+        Log.d(TAG, "loading Vosk SpeakerModel from $path")
+        val sm = SpeakerModel(path)
+        speakerModel = sm
+        speakerModelPath = path
+        return sm
+    }
+
+    /**
+     * Fresh recognizer for one session. Caller must close() when done.
+     * Attaches a SpeakerModel automatically when one is present so
+     * each result JSON carries an `spk` x-vector array.
+     */
     fun newRecognizer(sampleRate: Float = 16_000f): Recognizer {
         val m = ensureModel()
-        return Recognizer(m, sampleRate)
+        val rec = Recognizer(m, sampleRate)
+        ensureSpeakerModel()?.let { runCatching { rec.setSpeakerModel(it) } }
+        return rec
     }
 
     /** Parse the JSON Vosk returns to its final-result + partial-result calls. */
     fun parseText(json: String): String =
         runCatching { JSONObject(json).optString("text", "") }.getOrDefault("").trim()
 
+    /**
+     * Extract the speaker x-vector from a Vosk result JSON. Returns
+     * null when the result was produced without a SpeakerModel
+     * attached, or when the utterance was too short for the model to
+     * compute one (Vosk only emits `spk` after a few frames of speech).
+     */
+    fun parseSpk(json: String): FloatArray? = runCatching {
+        val arr = JSONObject(json).optJSONArray("spk") ?: return@runCatching null
+        FloatArray(arr.length()) { arr.getDouble(it).toFloat() }
+    }.getOrNull()
+
     fun release() {
+        runCatching { speakerModel?.close() }
+        speakerModel = null
+        speakerModelPath = null
         model?.close()
         model = null
         loadedPath = null
