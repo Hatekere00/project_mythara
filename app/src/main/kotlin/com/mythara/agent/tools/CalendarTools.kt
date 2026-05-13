@@ -65,9 +65,12 @@ class ListCalendarEventsTool @Inject constructor(
 
     override val name: String = "list_calendar_events"
     override val description: String =
-        "Upcoming events from the user's calendars. " +
-            "Defaults to the next 48 hours; pass `hoursAhead` to widen. " +
-            "Use when the user asks 'what's on my schedule', 'do I have anything tomorrow', etc."
+        "Upcoming events from the user's calendars. Includes ALL calendars the user has linked + synced through Android's CalendarContract: " +
+            "Google Calendar, Microsoft Outlook (com.microsoft.office.outlook), Exchange / corporate accounts, local calendars. " +
+            "Teams meetings show up here as long as the user has Outlook syncing — Teams itself doesn't expose a separate calendar surface on Android. " +
+            "Defaults to the next 48 hours; pass `hoursAhead` to widen up to 30 days. " +
+            "Use when the user asks 'what's on my schedule', 'do I have anything tomorrow', 'when's my next Teams meeting'. " +
+            "This is a READ tool — it works even when autopilot is off."
 
     override val parameters: JsonObject = buildJsonObject {
         put("type", "object")

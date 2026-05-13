@@ -89,6 +89,12 @@ fun SettingsScreen(
         AutopilotPanel()
 
         Spacer(Modifier.height(16.dp))
+        EnterpriseAutopilotPanel()
+
+        Spacer(Modifier.height(16.dp))
+        FavoritesPanel()
+
+        Spacer(Modifier.height(16.dp))
         UserNamePanel()
 
         Spacer(Modifier.height(16.dp))

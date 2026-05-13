@@ -3,6 +3,7 @@ package com.mythara
 import android.app.Application
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
+import com.mythara.agent.AutoReplyDispatcher
 import com.mythara.agent.SelfOrganizerScheduler
 import com.mythara.growth.GrowthScheduler
 import com.mythara.memory.MemorySyncScheduler
@@ -38,6 +39,7 @@ class MytharaApp : Application(), Configuration.Provider {
     @Inject lateinit var quickTalkSettings: QuickTalkSettings
     @Inject lateinit var personaScheduler: PersonaScheduler
     @Inject lateinit var personaSettings: PersonaSettings
+    @Inject lateinit var autoReplyDispatcher: AutoReplyDispatcher
 
     // App-scoped supervisor for fire-and-forget process-level
     // coroutines (settings-flow observers etc.). Cancelled implicitly
@@ -55,6 +57,11 @@ class MytharaApp : Application(), Configuration.Provider {
         growthScheduler.start()
         memorySyncScheduler.start()
         selfOrganizerScheduler.start()
+        // Auto-reply dispatcher subscribes to the global notification
+        // stream at boot. It self-gates on AutopilotStore +
+        // EnterpriseAutopilotStore + FavoritesStore — flipping any of
+        // those off pauses auto-replies without stopping the listener.
+        autoReplyDispatcher.start()
         // Reflect the user's persistent-talk-notification preference
         // on every cold start (and follow live toggles while the
         // process is alive). Observing the Flow rather than reading

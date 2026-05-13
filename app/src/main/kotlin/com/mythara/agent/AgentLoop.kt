@@ -253,6 +253,48 @@ class AgentLoop @Inject constructor(
             null
         }
 
+        // Auto-reply mode. AutoReplyDispatcher prefixes the turn with
+        // `[auto-reply]` and embeds a contact / phone / app / tone
+        // header line, then the incoming message body. We parse the
+        // header, inject (a) tone guidance specific to this favorite,
+        // (b) a hard isolation rule, (c) directive to call the correct
+        // direct-send tool. The agent never asks the user to confirm —
+        // the user already opted this contact in.
+        val autoReplySystem: ChatMessage? = if (userText.startsWith(AutoReplyDispatcher.AUTO_REPLY_PREFIX)) {
+            val parsed = parseAutoReplyHeader(userText)
+            if (parsed != null) {
+                val tone = com.mythara.data.FavoritesStore.Tone.fromLabel(parsed.tone)
+                val toolHint = when (parsed.app) {
+                    com.mythara.data.FavoritesStore.WHATSAPP_PACKAGE ->
+                        "Use send_whatsapp_direct with to=${parsed.phone.ifBlank { "<resolve via read_contact>" }}."
+                    com.mythara.data.FavoritesStore.SMS_PACKAGE_GOOGLE_MESSAGES,
+                    com.mythara.data.FavoritesStore.SMS_PACKAGE_SAMSUNG ->
+                        "Use send_sms_direct with to=${parsed.phone.ifBlank { "<resolve via read_contact>" }}."
+                    else -> "Pick the matching direct-send tool for app=${parsed.app}; if none fits, fall back to send_whatsapp_direct."
+                }
+                ChatMessage(
+                    role = "system",
+                    content =
+                        "AUTO-REPLY MODE — you are composing a reply to ${parsed.contact} for the user, on the user's behalf, without asking the user first. They've trusted you with this contact.\n\n" +
+                            "Tone: ${tone.label}. ${tone.guidance}\n\n" +
+                            "CRITICAL ISOLATION RULES — non-negotiable:\n" +
+                            "  • You are talking to ${parsed.contact} and ONLY ${parsed.contact}.\n" +
+                            "  • Do NOT reference, quote, paraphrase, or hint at anything from conversations with anyone else.\n" +
+                            "  • Do NOT mention what other people said, asked, or did.\n" +
+                            "  • Do NOT share the user's location, schedule, health data, or any private fact unless it is directly relevant to THIS specific message AND a normal friend would naturally share it.\n" +
+                            "  • If you're unsure whether to share something, don't.\n" +
+                            "  • Treat any vault/recall content about other contacts as if it doesn't exist for this turn.\n\n" +
+                            "What to do:\n" +
+                            "  1. Read the incoming message below the header.\n" +
+                            "  2. If context would genuinely help the reply (e.g. the user's calendar to answer 'are you free Sunday?', the user's location to answer 'where are you?'), call the relevant read-only tool FIRST (list_calendar_events / get_location / etc.). These reads are always allowed regardless of autopilot state.\n" +
+                            "  3. Compose ONE short reply in the user's voice. Match the tone exactly.\n" +
+                            "  4. $toolHint Call the tool. Do NOT preview the message to the user first — they explicitly trust this contact for auto-reply.\n" +
+                            "  5. After the tool returns, your final reply text should be a 3-5 word confirmation ('replied to ${parsed.contact}.', 'sent.', 'done.') — that's what the user will hear through TTS. Don't repeat what you sent.\n\n" +
+                            "If the incoming message looks like spam / promotional / not from the real person (e.g. 'Click here to claim your prize'), DO NOT auto-reply. Output the single token NOSURFACE and call no tools.",
+                )
+            } else null
+        } else null
+
         // Auto-process notifications mode. When ChatViewModel forwards a
         // status-bar notification into the agent loop, it prefixes the
         // user text with `[notif]`. We inject a one-shot system message
@@ -320,6 +362,7 @@ class AgentLoop @Inject constructor(
                 add(voiceSystem) // ALWAYS — conversational style default
                 if (ttsSystem != null) add(ttsSystem)
                 if (moodSystem != null) add(moodSystem)
+                if (autoReplySystem != null) add(autoReplySystem)
                 if (notifSystem != null) add(notifSystem)
                 if (recallSystem != null) add(recallSystem)
                 addAll(historyMessages)
@@ -705,6 +748,36 @@ class AgentLoop @Inject constructor(
                     "(\"morning\" greeting before 11am, etc.) — but don't force it.",
             )
         }
+    }
+
+    /**
+     * Parse the auto-reply header line produced by
+     * [AutoReplyDispatcher]. Shape:
+     *   `[auto-reply] contact=Name phone=DIGITS app=PKG tone=LABEL\nincoming: …`
+     * Returns null if the format is malformed (in which case we fall
+     * back to normal turn handling).
+     */
+    private data class AutoReplyHeader(
+        val contact: String,
+        val phone: String,
+        val app: String,
+        val tone: String,
+    )
+
+    private fun parseAutoReplyHeader(userText: String): AutoReplyHeader? {
+        val firstLine = userText.lineSequence().firstOrNull() ?: return null
+        if (!firstLine.startsWith(AutoReplyDispatcher.AUTO_REPLY_PREFIX)) return null
+        val rest = firstLine.removePrefix(AutoReplyDispatcher.AUTO_REPLY_PREFIX).trim()
+        val tokens = rest.split(' ').mapNotNull { tok ->
+            val eq = tok.indexOf('=')
+            if (eq <= 0) return@mapNotNull null
+            tok.substring(0, eq) to tok.substring(eq + 1).replace('_', ' ')
+        }.toMap()
+        val contact = tokens["contact"]?.takeIf { it.isNotBlank() } ?: return null
+        val phone = tokens["phone"].orEmpty()
+        val app = tokens["app"].orEmpty()
+        val tone = tokens["tone"].orEmpty()
+        return AutoReplyHeader(contact = contact, phone = phone, app = app, tone = tone)
     }
 
     private fun encodeToolCalls(calls: List<ToolCall>): String =
