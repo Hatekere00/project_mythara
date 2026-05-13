@@ -1,40 +1,63 @@
 package com.mythara.voice
 
+import android.content.ComponentName
+import android.content.Intent
 import android.os.Bundle
 import android.service.voice.VoiceInteractionSession
 import android.service.voice.VoiceInteractionSessionService
 import android.util.Log
 
 /**
- * Minimal VoiceInteractionSessionService stub. Required by Android
- * to be paired with [MytharaVoiceInteractionService] — without it
- * the OS refuses to register us as a valid Digital Assistant.
+ * VoiceInteractionSessionService used by [MytharaVoiceInteractionService].
  *
- * We don't actually use the session overlay UI (no in-app picture-in-
- * picture-style assistant chrome). Our session is a no-op that
- * immediately closes; the actual assistant work happens in
- * [com.mythara.MainActivity] after [MytharaVoiceInteractionService]
- * delivers an ACTION_ASSIST intent to it via the
- * onLaunchVoiceAssistFromKeyguard path.
+ * Android invokes one of two entrypoints for an assistant gesture:
+ *  - `onLaunchVoiceAssistFromKeyguard` on the VoiceInteractionService
+ *    when the device is locked (we handle that there).
+ *  - `onNewSession` here when the device is unlocked (home
+ *    long-press, corner-swipe assist, Pixel Buds touch-and-hold via
+ *    the system route).
  *
- * Why ship a stub instead of a real session: a real
- * VoiceInteractionSession draws a window over whatever app the user
- * is in (it's what Google Assistant's overlay sheet is). Mythara is
- * a full-screen chat surface; we'd rather pop the activity than
- * paint a translucent overlay. The stub keeps the registration
- * gate happy while we route the actual UX through the activity.
+ * For the unlocked case, the system binds this session and calls
+ * `onShow` on it. We don't draw an overlay sheet — Mythara's UX is
+ * a full chat activity — so onShow starts MainActivity with
+ * ACTION_ASSIST and then immediately finishes the session. The
+ * activity's existing `handleVoiceIntent` path then fires
+ * VoiceActionStore → ChatScreen one-shot STT → agent.
+ *
+ * (Earlier revision finish()ed in `onCreate`. That was wrong: the
+ * system binds the session before showing it, and our early finish
+ * left the gesture path dead. onShow is the right place.)
  */
 class MytharaVoiceInteractionSessionService : VoiceInteractionSessionService() {
 
     override fun onNewSession(args: Bundle?): VoiceInteractionSession {
-        Log.d(TAG, "onNewSession (immediate finish)")
-        return object : VoiceInteractionSession(this) {
-            override fun onCreate() {
-                super.onCreate()
-                // Close right away. The real chat UI is reached via
-                // MainActivity's ACTION_ASSIST intent path.
-                finish()
+        Log.d(TAG, "onNewSession")
+        return MytharaSession(this)
+    }
+
+    private class MytharaSession(svc: VoiceInteractionSessionService) :
+        VoiceInteractionSession(svc) {
+
+        override fun onShow(args: Bundle?, showFlags: Int) {
+            super.onShow(args, showFlags)
+            Log.d(TAG, "onShow flags=$showFlags — launching MainActivity")
+            launchAssistActivity()
+            // Finish the session right after launching the activity.
+            // We don't paint any overlay; the activity owns the UX
+            // from here on.
+            finish()
+        }
+
+        private fun launchAssistActivity() {
+            val ctx = context
+            val intent = Intent(Intent.ACTION_ASSIST).apply {
+                component = ComponentName(ctx, "com.mythara.MainActivity")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
             }
+            runCatching { ctx.startActivity(intent) }
+                .onFailure { Log.w(TAG, "startActivity failed", it) }
         }
     }
 
