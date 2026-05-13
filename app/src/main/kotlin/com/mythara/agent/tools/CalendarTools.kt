@@ -242,32 +242,39 @@ class CreateCalendarEventTool @Inject constructor(
                 """{"error":"no_writable_calendar","detail":"Couldn't find a writable calendar on this device. Open Google Calendar (or any calendar app), make sure at least one account/calendar is visible + syncing, then retry."}""",
             )
         val tz = TimeZone.getDefault().id
-        // Some sync adapters (notably Google Calendar) require the
-        // ACCOUNT_NAME / ACCOUNT_TYPE to be set on inserted rows so
-        // they can correctly route the event upstream. Without these,
-        // the row lands in the local DB but the sync adapter ignores
-        // it — the event "exists" but never appears in the Calendar
-        // app UI, exactly what the user is hitting. Mirror the values
-        // we read from the picked calendar.
+        // IMPORTANT: ACCOUNT_NAME / ACCOUNT_TYPE are READ-ONLY columns
+        // on Events for non-sync-adapter callers — setting them on
+        // this insert causes the provider to reject the write (returns
+        // null URI silently). The account routing happens automatically
+        // via CALENDAR_ID, which inherits the parent calendar's
+        // account. Don't put ACCOUNT_NAME / ACCOUNT_TYPE here.
+        //
+        // Minimal required fields per the Android docs:
+        //   CALENDAR_ID, DTSTART, DTEND (or DURATION), EVENT_TIMEZONE.
+        // TITLE is optional but the user always wants one.
         val values = ContentValues().apply {
             put(CalendarContract.Events.CALENDAR_ID, cal.id)
             put(CalendarContract.Events.TITLE, title)
             put(CalendarContract.Events.DTSTART, startMs)
             put(CalendarContract.Events.DTEND, endMs)
             put(CalendarContract.Events.EVENT_TIMEZONE, tz)
-            put(CalendarContract.Events.HAS_ATTENDEE_DATA, 1)
-            put(CalendarContract.Events.STATUS, CalendarContract.Events.STATUS_CONFIRMED)
-            if (cal.accountName != null) put(CalendarContract.Events.ACCOUNT_NAME, cal.accountName)
-            if (cal.accountType != null) put(CalendarContract.Events.ACCOUNT_TYPE, cal.accountType)
             if (location != null) put(CalendarContract.Events.EVENT_LOCATION, location)
             if (description != null) put(CalendarContract.Events.DESCRIPTION, description)
             if (allDay) put(CalendarContract.Events.ALL_DAY, 1)
         }
+        android.util.Log.d(
+            TAG,
+            "inserting event title=$title start=$startMs end=$endMs tz=$tz " +
+                "cal=${cal.id}/${cal.displayName} acct=${cal.accountName}/${cal.accountType}",
+        )
         val uri = withContext(Dispatchers.IO) {
             runCatching { ctx.contentResolver.insert(CalendarContract.Events.CONTENT_URI, values) }
-                .onFailure { android.util.Log.w(TAG, "calendar insert threw", it) }
+                .onFailure { android.util.Log.w(TAG, "calendar insert threw: ${it.message}", it) }
                 .getOrNull()
-        } ?: return ToolResult(false, """{"error":"insert_failed","detail":"contentResolver.insert returned null — see logcat tag Mythara/Cal."}""")
+        } ?: return ToolResult(
+            false,
+            """{"error":"insert_failed","detail":"Calendar provider rejected the insert. Picked calendar=${cal.displayName} on ${cal.accountName}/${cal.accountType}. The calendar may be read-only or the account may not allow writes. Open the Calendar app and confirm this calendar accepts new events."}""",
+        )
         val eventId = ContentUris.parseId(uri)
 
         // Verify the row is actually queryable AFTER insert. If the
