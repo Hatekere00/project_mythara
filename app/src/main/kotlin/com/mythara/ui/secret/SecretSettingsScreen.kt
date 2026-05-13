@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.mythara.secret.observe.ObserveState
 import com.mythara.secret.observe.embed.EmbeddingsModelStore
+import com.mythara.secret.observe.extract.gemma.GemmaModelStore
 import com.mythara.secret.observe.vosk.VoskModelStore
 import com.mythara.ui.theme.Glyph
 import com.mythara.ui.theme.MytharaColors
