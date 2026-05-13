@@ -7,6 +7,7 @@ import com.mythara.memory.Tier
 import com.mythara.secret.observe.embed.EmbeddingsModelStore
 import com.mythara.secret.observe.embed.LocalEmbedder
 import com.mythara.mic.MicBroker
+import com.mythara.secret.observe.acoustic.AcousticAnalyzer
 import com.mythara.secret.observe.extract.LumiNoteDetector
 import com.mythara.secret.observe.extract.SemanticExtractor
 import com.mythara.secret.observe.speaker.SpeakerVault
@@ -60,6 +61,7 @@ class ObserveSession @Inject constructor(
     private val journal: LearningJournal,
     private val speakerVault: SpeakerVault,
     private val micBroker: MicBroker,
+    private val acousticAnalyzer: AcousticAnalyzer,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
@@ -96,6 +98,15 @@ class ObserveSession @Inject constructor(
         val transcriptsDir = ctx.filesDir.resolve("observe/transcripts").apply { mkdirs() }
         val buf = ShortArray(recorder.readFrameSamples)
 
+        // Per-utterance PCM buffer for acoustic analysis (M8.5 phase 2).
+        // Sized for ~30s @ 16kHz mono int16 → ~960KB resident, freed on
+        // every utterance final. The clipping behaviour (`min` on copy)
+        // means a very long utterance just gets analysed up to 30s and
+        // the rest is fed to Vosk normally; we don't grow the buffer
+        // because that would invite OOM on rambly speakers.
+        val utteranceBuf = ShortArray(MAX_UTTERANCE_SAMPLES)
+        var utteranceSize = 0
+
         job = scope.launch {
             try {
                 while (isActive) {
@@ -106,15 +117,25 @@ class ObserveSession @Inject constructor(
                     }
                     val n = recorder.read(buf)
                     if (n <= 0) continue
+                    // Append to per-utterance buffer up to the cap.
+                    val toCopy = minOf(n, utteranceBuf.size - utteranceSize)
+                    if (toCopy > 0) {
+                        System.arraycopy(buf, 0, utteranceBuf, utteranceSize, toCopy)
+                        utteranceSize += toCopy
+                    }
                     val isFinal = recognizer.acceptWaveForm(buf, n)
                     if (isFinal) {
                         val resultJson = recognizer.result
                         val text = asr.parseText(resultJson)
                         if (text.isNotBlank()) {
                             val spkVec = asr.parseSpk(resultJson)
-                            writeTranscript(transcriptsDir, text, spkVec)
+                            val acoustic = analyseUtterance(
+                                utteranceBuf, utteranceSize, text,
+                            )
+                            writeTranscript(transcriptsDir, text, spkVec, acoustic)
                             transcriptCount += 1
                         }
+                        utteranceSize = 0
                     }
                 }
                 // Drain final result on graceful stop.
@@ -122,7 +143,8 @@ class ObserveSession @Inject constructor(
                 val tail = asr.parseText(tailJson)
                 if (tail.isNotBlank()) {
                     val tailSpk = asr.parseSpk(tailJson)
-                    writeTranscript(transcriptsDir, tail, tailSpk)
+                    val tailAcoustic = analyseUtterance(utteranceBuf, utteranceSize, tail)
+                    writeTranscript(transcriptsDir, tail, tailSpk, tailAcoustic)
                     transcriptCount += 1
                 }
             } catch (t: Throwable) {
@@ -148,7 +170,39 @@ class ObserveSession @Inject constructor(
         job = null
     }
 
-    private suspend fun writeTranscript(dir: File, text: String, spkVec: FloatArray? = null) {
+    /**
+     * Compute acoustic features for the just-captured utterance.
+     * Word count comes from the Vosk transcript so [AcousticAnalyzer]
+     * doesn't have to re-tokenise. Falls back to an empty Features
+     * struct on any error so the recording loop never crashes from
+     * a DSP issue.
+     */
+    private fun analyseUtterance(
+        pcm: ShortArray,
+        validSamples: Int,
+        text: String,
+    ): AcousticAnalyzer.Features {
+        if (validSamples <= 0) return AcousticAnalyzer.Features(0f, 0f, 0f, 0f)
+        val wordCount = text.split(Regex("\\s+")).filter { it.isNotBlank() }.size
+        return runCatching {
+            acousticAnalyzer.analyze(
+                pcm = pcm,
+                validSamples = validSamples,
+                sampleRate = AudioRecorder.SAMPLE_RATE,
+                wordCount = wordCount,
+            )
+        }.getOrElse { e ->
+            Log.w(TAG, "acoustic analysis failed: ${e.message}")
+            AcousticAnalyzer.Features(0f, 0f, 0f, 0f)
+        }
+    }
+
+    private suspend fun writeTranscript(
+        dir: File,
+        text: String,
+        spkVec: FloatArray? = null,
+        acoustic: AcousticAnalyzer.Features = AcousticAnalyzer.Features(0f, 0f, 0f, 0f),
+    ) {
         val now = System.currentTimeMillis()
 
         // Speaker ID: if Vosk emitted an x-vector for this utterance AND
@@ -191,6 +245,21 @@ class ObserveSession @Inject constructor(
             }
         }
 
+        // Acoustic-feature facets (M8.5 phase 2). Bucketed ordinal
+        // labels so they ride through the same facet pipeline as
+        // mood/speaker/topic. Future calibration work can use the
+        // raw Features object to refine the Gemma text-only mood.
+        val acousticFacets: List<String> = if (acoustic.durationSec > 0f) {
+            Log.d(
+                TAG,
+                "acoustic: f0=${"%.0f".format(acoustic.meanF0Hz)}Hz " +
+                    "rms=${"%.3f".format(acoustic.meanRms)} " +
+                    "wps=${"%.2f".format(acoustic.wordsPerSec)} " +
+                    "dur=${"%.1f".format(acoustic.durationSec)}s",
+            )
+            acousticAnalyzer.bucket(acoustic)
+        } else emptyList()
+
         // ---- Vault writes ----
         // 1. Working-tier record holding the raw transcript text + its
         //    embedding. Stays local; never synced (see MemorySync filter).
@@ -198,6 +267,7 @@ class ObserveSession @Inject constructor(
         val transcriptFacets = buildList {
             add("kind:transcript")
             if (speakerFacet != null) add(speakerFacet)
+            addAll(acousticFacets)
         }
         vault.add(
             content = text,
@@ -227,6 +297,7 @@ class ObserveSession @Inject constructor(
                 add("kind:explicit-note")
                 add("addressed:lumi")
                 if (speakerFacet != null) add(speakerFacet)
+                addAll(acousticFacets)
             }
             val added = vault.add(
                 content = noteText,
@@ -271,6 +342,10 @@ class ObserveSession @Inject constructor(
                     if (moodFacet != null && fact.facets.none { it.startsWith("mood:") }) {
                         add(moodFacet)
                     }
+                    for (af in acousticFacets) {
+                        val key = af.substringBefore(':') + ":"
+                        if (fact.facets.none { it.startsWith(key) }) add(af)
+                    }
                 }
                 val added = vault.add(
                     content = fact.content,
@@ -310,6 +385,13 @@ class ObserveSession @Inject constructor(
 
     companion object {
         private const val TAG = "Mythara/Observe"
+
+        /** Max samples buffered per utterance for acoustic analysis.
+         *  At 16 kHz, 30s × 16000 = 480_000 — about 960 KB resident.
+         *  Beyond this the utterance is still transcribed; only the
+         *  acoustic features are computed from the first 30 seconds. */
+        private const val MAX_UTTERANCE_SAMPLES = 480_000
+
         private val ISO_FMT = SimpleDateFormat("yyyyMMdd'T'HHmmss'_'SSS'Z'", Locale.US).apply {
             timeZone = java.util.TimeZone.getTimeZone("UTC")
         }
