@@ -56,10 +56,13 @@ class LumiWakeWordService : Service() {
         super.onCreate()
         ensureChannel()
         startForeground(NOTIF_ID, buildNotification(), serviceTypeForFgs())
-        controller.start()
+        // Controller start is suspend (AccessKey lives in DataStore) so
+        // we kick it off the service's CoroutineScope. The status flow
+        // tells the UI what happened.
+        scope.launch { controller.start() }
         wakeRelay = scope.launch {
             controller.wakes.collect { event ->
-                Log.d(TAG, "relay wake → app: ${event.phrase} (score=${event.score})")
+                Log.d(TAG, "relay wake → app: ${event.phrase} (idx=${event.keywordIndex})")
                 Wakes.broadcast.tryEmit(event)
             }
         }
