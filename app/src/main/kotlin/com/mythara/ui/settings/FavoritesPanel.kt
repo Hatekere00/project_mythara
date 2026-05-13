@@ -149,90 +149,131 @@ fun FavoritesPanel(vm: FavoritesViewModel = hiltViewModel()) {
             }
         }
 
-        // Add new — inline form.
+        // Add new — primary path is the system contact picker; manual
+        // entry stays as an expandable fallback for cases where the
+        // user wants to add someone who isn't in their address book
+        // (e.g. a friend whose number they have memorised but never
+        // saved as a contact).
         Spacer(Modifier.height(10.dp))
         var name by remember { mutableStateOf("") }
         var phone by remember { mutableStateOf("") }
         var tone by remember { mutableStateOf(FavoritesStore.Tone.Realistic) }
         var toneOpen by remember { mutableStateOf(false) }
+        var manualOpen by remember { mutableStateOf(false) }
+
+        // System contact picker. The OS grants us one-shot read access
+        // to the picked contact without us holding READ_CONTACTS — same
+        // pattern as the calendar add-event flow. Result pre-fills
+        // name + phone so the user can pick the tone and tap add.
+        val contactPicker = rememberContactPicker { picked ->
+            if (picked != null) {
+                name = picked.displayName
+                phone = picked.phone
+                // Auto-open the manual form so the user sees the
+                // pre-filled fields and can adjust before adding.
+                manualOpen = true
+            }
+        }
+
         Text(
             text = "${Glyph.DiamondOutline} add a favorite",
             color = MytharaColors.FgMute,
             style = MaterialTheme.typography.bodySmall,
         )
         Spacer(Modifier.height(6.dp))
-        OutlinedTextField(
-            value = name,
-            onValueChange = { name = it },
-            singleLine = true,
-            placeholder = { Text("name (must match how the app shows it)", color = MytharaColors.FgDim) },
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = MytharaColors.Fg,
-                unfocusedTextColor = MytharaColors.Fg,
-                focusedBorderColor = MytharaColors.Charple,
-                unfocusedBorderColor = MytharaColors.SurfaceHigh,
-                cursorColor = MytharaColors.Charple,
+        Button(
+            onClick = { contactPicker.launch(Unit) },
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MytharaColors.Charple,
+                contentColor = MytharaColors.Fg,
             ),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(6.dp))
-        OutlinedTextField(
-            value = phone,
-            onValueChange = { phone = it },
-            singleLine = true,
-            placeholder = { Text("+1 555 …", color = MytharaColors.FgDim) },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = MytharaColors.Fg,
-                unfocusedTextColor = MytharaColors.Fg,
-                focusedBorderColor = MytharaColors.Charple,
-                unfocusedBorderColor = MytharaColors.SurfaceHigh,
-                cursorColor = MytharaColors.Charple,
-            ),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(8.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box {
+            Text("${Glyph.Arrow} pick from contacts")
+        }
+        Spacer(Modifier.height(6.dp))
+        if (!manualOpen) {
+            TextButton(onClick = { manualOpen = true }) {
+                Text(
+                    text = "${Glyph.Arrow} or type name + phone manually",
+                    color = MytharaColors.FgMute,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        } else {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                singleLine = true,
+                placeholder = { Text("name (must match how the app shows it)", color = MytharaColors.FgDim) },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = MytharaColors.Fg,
+                    unfocusedTextColor = MytharaColors.Fg,
+                    focusedBorderColor = MytharaColors.Charple,
+                    unfocusedBorderColor = MytharaColors.SurfaceHigh,
+                    cursorColor = MytharaColors.Charple,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(6.dp))
+            OutlinedTextField(
+                value = phone,
+                onValueChange = { phone = it },
+                singleLine = true,
+                placeholder = { Text("+1 555 …", color = MytharaColors.FgDim) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = MytharaColors.Fg,
+                    unfocusedTextColor = MytharaColors.Fg,
+                    focusedBorderColor = MytharaColors.Charple,
+                    unfocusedBorderColor = MytharaColors.SurfaceHigh,
+                    cursorColor = MytharaColors.Charple,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box {
+                    Button(
+                        onClick = { toneOpen = true },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MytharaColors.Surface,
+                            contentColor = MytharaColors.Fg,
+                        ),
+                    ) {
+                        Text("tone: ${tone.label}  ${Glyph.Arrow}")
+                    }
+                    DropdownMenu(expanded = toneOpen, onDismissRequest = { toneOpen = false }) {
+                        FavoritesStore.Tone.entries.forEach { t ->
+                            DropdownMenuItem(
+                                text = { Text(t.label, color = MytharaColors.Fg) },
+                                onClick = {
+                                    tone = t
+                                    toneOpen = false
+                                },
+                            )
+                        }
+                    }
+                }
                 Button(
-                    onClick = { toneOpen = true },
+                    onClick = {
+                        vm.add(name, phone, tone)
+                        name = ""
+                        phone = ""
+                        tone = FavoritesStore.Tone.Realistic
+                        manualOpen = false
+                    },
+                    enabled = name.isNotBlank(),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MytharaColors.Surface,
+                        containerColor = MytharaColors.Charple,
                         contentColor = MytharaColors.Fg,
                     ),
                 ) {
-                    Text("tone: ${tone.label}  ${Glyph.Arrow}")
+                    Text("${Glyph.Arrow} add")
                 }
-                DropdownMenu(expanded = toneOpen, onDismissRequest = { toneOpen = false }) {
-                    FavoritesStore.Tone.entries.forEach { t ->
-                        DropdownMenuItem(
-                            text = { Text(t.label, color = MytharaColors.Fg) },
-                            onClick = {
-                                tone = t
-                                toneOpen = false
-                            },
-                        )
-                    }
-                }
-            }
-            Button(
-                onClick = {
-                    vm.add(name, phone, tone)
-                    name = ""
-                    phone = ""
-                    tone = FavoritesStore.Tone.Realistic
-                },
-                enabled = name.isNotBlank(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MytharaColors.Charple,
-                    contentColor = MytharaColors.Fg,
-                ),
-            ) {
-                Text("${Glyph.Arrow} add")
             }
         }
     }

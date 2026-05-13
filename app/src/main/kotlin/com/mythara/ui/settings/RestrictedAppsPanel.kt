@@ -99,7 +99,11 @@ fun RestrictedAppsPanel(vm: RestrictedAppsViewModel = hiltViewModel()) {
 
         Spacer(Modifier.height(12.dp))
 
-        // Blocked — always-veto
+        // Blocked — always-veto. App picker shows installed apps so
+        // the user can pick (e.g.) their regional bank by name rather
+        // than guessing the package id. Manual entry stays for power
+        // users / packages without launcher activity.
+        var blockedPickerOpen by remember { mutableStateOf(false) }
         Section(
             title = "${Glyph.Cross} blocked (never automate)",
             titleColor = MytharaColors.Sriracha,
@@ -107,12 +111,22 @@ fun RestrictedAppsPanel(vm: RestrictedAppsViewModel = hiltViewModel()) {
             extras = blockedExtras,
             onRemove = vm::removeBlocked,
             onAdd = vm::addBlocked,
+            onPickFromInstalled = { blockedPickerOpen = true },
             placeholder = "com.examplebank.android",
         )
+        if (blockedPickerOpen) {
+            AppPickerSheet(
+                title = "pick an app to block",
+                excludePackages = blocked,
+                onDismiss = { blockedPickerOpen = false },
+                onPick = { pkg -> vm.addBlocked(pkg) },
+            )
+        }
 
         Spacer(Modifier.height(12.dp))
 
         // Critical — always-confirm
+        var criticalPickerOpen by remember { mutableStateOf(false) }
         Section(
             title = "${Glyph.Refresh} critical (always confirm)",
             titleColor = MytharaColors.Mustard,
@@ -120,8 +134,17 @@ fun RestrictedAppsPanel(vm: RestrictedAppsViewModel = hiltViewModel()) {
             extras = criticalExtras,
             onRemove = vm::removeCritical,
             onAdd = vm::addCritical,
+            onPickFromInstalled = { criticalPickerOpen = true },
             placeholder = "com.example.shopping",
         )
+        if (criticalPickerOpen) {
+            AppPickerSheet(
+                title = "pick an app to require confirmation",
+                excludePackages = critical,
+                onDismiss = { criticalPickerOpen = false },
+                onPick = { pkg -> vm.addCritical(pkg) },
+            )
+        }
     }
 }
 
@@ -133,6 +156,7 @@ private fun Section(
     extras: Set<String>,
     onRemove: (String) -> Unit,
     onAdd: (String) -> Unit,
+    onPickFromInstalled: () -> Unit,
     placeholder: String,
 ) {
     Text(
@@ -163,39 +187,68 @@ private fun Section(
         }
     }
 
-    Spacer(Modifier.height(6.dp))
-    var input by remember { mutableStateOf("") }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
+    Spacer(Modifier.height(8.dp))
+    // Primary path: pick from installed apps. Most users want a
+    // visual picker, not to type a package id from memory.
+    Button(
+        onClick = onPickFromInstalled,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MytharaColors.Charple,
+            contentColor = MytharaColors.Fg,
+        ),
     ) {
-        OutlinedTextField(
-            value = input,
-            onValueChange = { input = it },
-            singleLine = true,
-            placeholder = { Text(placeholder, color = MytharaColors.FgDim) },
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = MytharaColors.Fg,
-                unfocusedTextColor = MytharaColors.Fg,
-                focusedBorderColor = MytharaColors.Charple,
-                unfocusedBorderColor = MytharaColors.SurfaceHigh,
-                cursorColor = MytharaColors.Charple,
-            ),
-            modifier = Modifier.weight(1f),
-        )
-        Spacer(Modifier.height(0.dp))
-        Button(
-            onClick = {
-                onAdd(input)
-                input = ""
-            },
-            enabled = input.isNotBlank(),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MytharaColors.Charple,
-                contentColor = MytharaColors.Fg,
-            ),
+        Text("${Glyph.Arrow} pick from installed apps")
+    }
+
+    // Fallback: manual package-name entry. Some packages (system
+    // services, work-profile apps) don't surface a launcher activity
+    // and so don't appear in the picker. We keep this as a power-user
+    // escape hatch, collapsed into a small secondary affordance below
+    // the main button.
+    Spacer(Modifier.height(6.dp))
+    var manualOpen by remember { mutableStateOf(false) }
+    if (!manualOpen) {
+        TextButton(onClick = { manualOpen = true }) {
+            Text(
+                text = "${Glyph.Arrow} or enter a package id manually",
+                color = MytharaColors.FgMute,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+    } else {
+        var input by remember { mutableStateOf("") }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("${Glyph.Arrow} add")
+            OutlinedTextField(
+                value = input,
+                onValueChange = { input = it },
+                singleLine = true,
+                placeholder = { Text(placeholder, color = MytharaColors.FgDim) },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = MytharaColors.Fg,
+                    unfocusedTextColor = MytharaColors.Fg,
+                    focusedBorderColor = MytharaColors.Charple,
+                    unfocusedBorderColor = MytharaColors.SurfaceHigh,
+                    cursorColor = MytharaColors.Charple,
+                ),
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.height(0.dp))
+            Button(
+                onClick = {
+                    onAdd(input)
+                    input = ""
+                },
+                enabled = input.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MytharaColors.Charple,
+                    contentColor = MytharaColors.Fg,
+                ),
+            ) {
+                Text("${Glyph.Arrow} add")
+            }
         }
     }
 }
