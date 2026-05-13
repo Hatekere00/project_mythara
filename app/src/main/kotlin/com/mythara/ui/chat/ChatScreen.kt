@@ -261,7 +261,16 @@ fun ChatScreen(
             if (ui.items.isEmpty() && ui.streaming.isNullOrEmpty()) {
                 EmptyStateHero(thinking = ui.thinking)
             } else {
-                Transcript(items = ui.items, streaming = ui.streaming)
+                Transcript(
+                    items = ui.items,
+                    streaming = ui.streaming,
+                    // Show the gradient-rolodex thinking indicator at
+                    // the bottom of the timeline while Lumi is working
+                    // but the first streamed token hasn't landed yet.
+                    // Once streaming text shows, the indicator hides
+                    // so the user reads the actual reply.
+                    thinkingVisible = ui.thinking && ui.streaming.isNullOrEmpty(),
+                )
             }
 
             ui.errorBanner?.let { msg ->
@@ -387,10 +396,16 @@ private fun EmptyStateHero(thinking: Boolean) {
 }
 
 @Composable
-private fun Transcript(items: List<ChatViewModel.ChatItem>, streaming: String?) {
+private fun Transcript(
+    items: List<ChatViewModel.ChatItem>,
+    streaming: String?,
+    thinkingVisible: Boolean = false,
+) {
     val listState = rememberLazyListState()
-    LaunchedEffect(items.size, streaming) {
-        val target = items.size + if (!streaming.isNullOrEmpty()) 1 else 0
+    val streamingActive = !streaming.isNullOrEmpty()
+    LaunchedEffect(items.size, streaming, thinkingVisible) {
+        val extra = (if (streamingActive) 1 else 0) + (if (thinkingVisible && !streamingActive) 1 else 0)
+        val target = items.size + extra
         if (target > 0) listState.animateScrollToItem(target - 1)
     }
     LazyColumn(
@@ -408,9 +423,17 @@ private fun Transcript(items: List<ChatViewModel.ChatItem>, streaming: String?) 
                 is ChatViewModel.ChatItem.Tool -> ToolCallBubble(item)
             }
         }
-        if (!streaming.isNullOrEmpty()) {
+        if (streamingActive) {
             item("streaming") {
                 TextBubble(role = "mythara", text = streaming + Glyph.AccentBar, isUser = false)
+            }
+        } else if (thinkingVisible) {
+            // Rolodex thinking indicator with the Charple→Bok brand
+            // gradient — only when nothing is streaming yet. Hides
+            // the instant the first token lands so we don't double
+            // up with the actual reply.
+            item("thinking") {
+                ThinkingIndicator()
             }
         }
     }
