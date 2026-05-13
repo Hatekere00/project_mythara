@@ -60,6 +60,72 @@ class WhatsAppExportImporter @Inject constructor(
         val detail: String? = null,
     )
 
+    /**
+     * Quick-scan a chat export and return the distinct sender labels
+     * found inside. Used by the import panel's preview step so the
+     * user can mark "this name is me" BEFORE we do the heavy
+     * per-contact ingest pass — without that, exports that use the
+     * user's WhatsApp profile/public name (instead of "You" or their
+     * saved contact name) get mis-attributed to a phantom contact.
+     *
+     * Roughly 10x faster than [import] for large exports because we
+     * skip the multi-line message accumulation, embedding, vault
+     * writes, and the Gemma passes — just parse the header pattern
+     * per line and collect sender names. Reuses the same regex
+     * matchers as the real import so what we surface here is
+     * exactly what import would attribute to.
+     */
+    suspend fun scanSenders(fileUri: Uri): Set<String> = withContext(Dispatchers.IO) {
+        val senders = HashSet<String>()
+        if (isZipUri(fileUri)) {
+            scanSendersZip(fileUri, senders)
+        } else {
+            scanSendersText(fileUri, senders)
+        }
+        senders
+    }
+
+    private fun scanSendersText(uri: Uri, into: HashSet<String>) {
+        runCatching {
+            ctx.contentResolver.openInputStream(uri)?.use { s ->
+                BufferedReader(InputStreamReader(s)).use { r ->
+                    while (true) {
+                        val line = r.readLine() ?: break
+                        extractSender(line)?.let { into.add(it) }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun scanSendersZip(uri: Uri, into: HashSet<String>) {
+        runCatching {
+            ctx.contentResolver.openInputStream(uri)?.use { s ->
+                ZipInputStream(s).use { zin ->
+                    while (true) {
+                        val entry = zin.nextEntry ?: break
+                        val name = entry.name
+                        if (name.endsWith(".txt", ignoreCase = true) &&
+                            (name.contains("chat", ignoreCase = true) || name.equals("_chat.txt", ignoreCase = true))
+                        ) {
+                            BufferedReader(InputStreamReader(NonClosingInput(zin))).useLines { lines ->
+                                lines.forEach { l -> extractSender(l)?.let { into.add(it) } }
+                            }
+                        }
+                        zin.closeEntry()
+                    }
+                }
+            }
+        }
+    }
+
+    /** Returns just the sender name from a header line, no message body parsing. */
+    private fun extractSender(line: String): String? {
+        BRACKETED.matchEntire(line)?.let { m -> return m.groupValues[2].trim().takeIf { it.isNotBlank() } }
+        DASH.matchEntire(line)?.let { m -> return m.groupValues[2].trim().takeIf { it.isNotBlank() } }
+        return null
+    }
+
     suspend fun import(fileUri: Uri): Outcome = withContext(Dispatchers.IO) {
         // Sniff the mime / filename to decide between zip and plain text.
         // Don't trust just the type from the picker — Files app on some

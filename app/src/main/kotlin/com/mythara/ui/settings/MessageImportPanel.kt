@@ -7,13 +7,18 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -53,6 +58,7 @@ class MessageImportPanelViewModel @Inject constructor(
     private val imageIngestScheduler: ImageIngestScheduler,
     val imageIngestProgress: ImageIngestProgress,
     private val analyticsBuilder: com.mythara.analytics.ContactAnalyticsBuilder,
+    private val userAliases: com.mythara.data.UserAliasesStore,
 ) : ViewModel() {
 
     private val _status = MutableStateFlow<String?>(null)
@@ -60,6 +66,23 @@ class MessageImportPanelViewModel @Inject constructor(
 
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
+
+    /**
+     * Two-phase WhatsApp import state. After file picker, we surface
+     * every distinct sender name detected in the chosen exports so
+     * the user can flag "which of these is me?" BEFORE the heavy
+     * ingest runs — without that, exports that use the user's
+     * WhatsApp profile name (not their saved contact name) create
+     * phantom contact profiles.
+     */
+    data class PendingImport(
+        val uris: List<Uri>,
+        val detectedSenders: List<String>,
+        val alreadyAliased: Set<String>,
+    )
+
+    private val _pendingImport = MutableStateFlow<PendingImport?>(null)
+    val pendingImport: StateFlow<PendingImport?> = _pendingImport.asStateFlow()
 
     fun importSms() {
         viewModelScope.launch {
@@ -89,7 +112,59 @@ class MessageImportPanelViewModel @Inject constructor(
         }
     }
 
-    fun importWhatsApp(uris: List<Uri>) {
+    /**
+     * Phase 1: scan exports for sender names, surface them to the UI
+     * for the user to mark which are themselves. Doesn't ingest yet.
+     */
+    fun previewWhatsApp(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch {
+            _busy.value = true
+            _status.value = "${Glyph.Ellipsis} scanning ${uris.size} export${if (uris.size > 1) "s" else ""} for sender names…"
+            val allSenders = HashSet<String>()
+            for (uri in uris) {
+                runCatching { waImporter.scanSenders(uri) }
+                    .getOrDefault(emptySet())
+                    .forEach { allSenders.add(it) }
+            }
+            val aliasNames = runCatching { userAliases.list().map { it.name.lowercase() }.toSet() }
+                .getOrDefault(emptySet())
+            val alreadyAliased = allSenders.filter { it.lowercase() in aliasNames }.toSet()
+            _pendingImport.value = PendingImport(
+                uris = uris,
+                detectedSenders = allSenders.sorted(),
+                alreadyAliased = alreadyAliased,
+            )
+            _status.value = "${Glyph.DiamondOutline} found ${allSenders.size} sender${if (allSenders.size > 1) "s" else ""} — confirm which are you"
+            _busy.value = false
+        }
+    }
+
+    /** User cancelled the preview without confirming. */
+    fun cancelPreview() {
+        _pendingImport.value = null
+        _status.value = null
+    }
+
+    /**
+     * Phase 2: after the user marked which senders are themselves,
+     * commit those as aliases and run the actual ingest.
+     */
+    fun confirmImport(markedAsMe: List<String>) {
+        val pending = _pendingImport.value ?: return
+        _pendingImport.value = null
+        viewModelScope.launch {
+            if (markedAsMe.isNotEmpty()) {
+                val newAliases = markedAsMe.map {
+                    com.mythara.data.UserAliasesStore.Alias(name = it, phone = "")
+                }
+                runCatching { userAliases.upsertAll(newAliases) }
+            }
+            runImport(pending.uris)
+        }
+    }
+
+    private fun runImport(uris: List<Uri>) {
         if (uris.isEmpty()) return
         viewModelScope.launch {
             _busy.value = true
@@ -169,6 +244,7 @@ fun MessageImportPanel(vm: MessageImportPanelViewModel = hiltViewModel()) {
     val status by vm.status.collectAsState()
     val busy by vm.busy.collectAsState()
     val ingestState by vm.imageIngestProgress.state.collectAsState()
+    val pending by vm.pendingImport.collectAsState()
     val ctx = LocalContext.current
 
     val smsPermLauncher = rememberLauncherForActivityResult(
@@ -183,7 +259,7 @@ fun MessageImportPanel(vm: MessageImportPanelViewModel = hiltViewModel()) {
     val waFilePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
     ) { uris: List<Uri> ->
-        if (uris.isNotEmpty()) vm.importWhatsApp(uris)
+        if (uris.isNotEmpty()) vm.previewWhatsApp(uris)
     }
 
     Column(
@@ -299,5 +375,134 @@ fun MessageImportPanel(vm: MessageImportPanelViewModel = hiltViewModel()) {
             color = MytharaColors.FgDim,
             style = MaterialTheme.typography.bodySmall,
         )
+    }
+
+    pending?.let { p ->
+        ImportPreviewSheet(
+            pending = p,
+            onCancel = { vm.cancelPreview() },
+            onConfirm = { selected -> vm.confirmImport(selected) },
+        )
+    }
+}
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@androidx.compose.runtime.Composable
+private fun ImportPreviewSheet(
+    pending: MessageImportPanelViewModel.PendingImport,
+    onCancel: () -> Unit,
+    onConfirm: (List<String>) -> Unit,
+) {
+    val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val selected = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateMapOf<String, Boolean>() }
+    androidx.compose.runtime.LaunchedEffect(pending.detectedSenders) {
+        pending.detectedSenders.forEach { if (it !in selected) selected[it] = false }
+    }
+    val selectedCount = selected.count { it.value }
+
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onCancel,
+        sheetState = sheetState,
+        containerColor = MytharaColors.Surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp)
+                .padding(bottom = 20.dp),
+        ) {
+            Text(
+                text = "${Glyph.DiamondFilled} which of these names is YOU?",
+                style = MaterialTheme.typography.titleSmall.copy(color = MytharaColors.Charple),
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "${Glyph.AccentBar} Mythara found these sender labels in the chosen exports. Tap whichever ones are you — they'll be saved as aliases so the importer treats them as your own messages instead of phantom contacts. The rest are real contacts. You can skip this if none of them are you.",
+                color = MytharaColors.FgDim,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Spacer(Modifier.height(12.dp))
+
+            if (pending.detectedSenders.isEmpty()) {
+                Text(
+                    text = "${Glyph.CircleOutline} no sender names detected. The export may be empty or in a format Mythara doesn't recognise.",
+                    color = MytharaColors.FgDim,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 60.dp, max = 360.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    items(pending.detectedSenders, key = { it }) { sender ->
+                        val isMe = selected[sender] == true
+                        val alreadyAliased = sender in pending.alreadyAliased
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isMe || alreadyAliased) MytharaColors.Surface else MytharaColors.Bg)
+                                .clickable(enabled = !alreadyAliased) {
+                                    selected[sender] = !(selected[sender] ?: false)
+                                }
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = if (alreadyAliased || isMe) Glyph.CircleFilled else Glyph.CircleOutline,
+                                color = when {
+                                    alreadyAliased -> MytharaColors.Bok
+                                    isMe -> MytharaColors.Charple
+                                    else -> MytharaColors.FgMute
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = sender,
+                                color = MytharaColors.Fg,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (alreadyAliased) {
+                                Text(
+                                    text = "already you",
+                                    color = MytharaColors.Bok,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                androidx.compose.material3.TextButton(onClick = onCancel) {
+                    Text("${Glyph.Cross} cancel", color = MytharaColors.FgMute)
+                }
+                Button(
+                    onClick = {
+                        val chosen = selected.filter { it.value }.keys.toList()
+                        onConfirm(chosen)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MytharaColors.Charple,
+                        contentColor = MytharaColors.Fg,
+                    ),
+                ) {
+                    Text(
+                        text = if (selectedCount == 0) "${Glyph.Arrow} import (none of these is me)"
+                        else "${Glyph.Check} mark $selectedCount as me + import",
+                    )
+                }
+            }
+        }
     }
 }
