@@ -144,23 +144,47 @@ class SendWhatsAppDirectTool @Inject constructor(
         }
 
         // 2. Wait for the chat surface to render + the send button
-        //    to be tap-ready. Empirically 1.5s on cold WhatsApp,
-        //    700ms on warm — splitting the difference.
-        delay(WAIT_FOR_CHAT_MS)
+        //    to be tap-ready. Initial wait is short; we poll for
+        //    the send button rather than rely on a single fixed
+        //    delay — cold WhatsApp can take 2+ seconds on slow
+        //    devices, warm WhatsApp resolves in ~400ms.
+        delay(INITIAL_WAIT_MS)
 
-        // 3. Tap the send button. WhatsApp content-descriptions
-        //    have shifted over versions — try the common ones
-        //    in order. Fallback to "Send" as a substring match.
-        val sent = service.tapNodeWithDesc("Send")
-            || service.tapNodeWithDesc("send")
-            || service.tapNodeWithId("send")
+        // 3. Poll for the send button across an array of selectors.
+        //    WhatsApp's content-description for the send icon has
+        //    shifted over versions ("Send", "send", "Send button",
+        //    "Send message"); the underlying view-id has been
+        //    "send" for a long time but is package-prefixed
+        //    "com.whatsapp:id/send" which our tapNodeWithId handles.
+        //    Polling up to MAX_WAIT_MS gives us ~10 attempts.
+        val sendSelectors = listOf<suspend () -> Boolean>(
+            { service.tapNodeWithId("send") },
+            { service.tapNodeWithDesc("Send") },
+            { service.tapNodeWithDesc("send") },
+            { service.tapNodeWithDesc("Send button") },
+            { service.tapNodeWithDesc("Send message") },
+            { service.tapNodeWithDesc("Send messages") },
+        )
+        var sent = false
+        val deadline = System.currentTimeMillis() + MAX_WAIT_MS
+        outer@ while (System.currentTimeMillis() < deadline) {
+            for (selector in sendSelectors) {
+                if (runCatching { selector() }.getOrDefault(false)) {
+                    sent = true
+                    break@outer
+                }
+            }
+            delay(POLL_INTERVAL_MS)
+        }
         if (!sent) {
-            // Couldn't find the send button. Leave the user inside
-            // WhatsApp with the message ready to tap; return a
-            // structured error so the agent can tell the user.
+            // Couldn't find the send button after polling. Leave
+            // the user inside WhatsApp with the message ready and
+            // return a structured error so the agent surfaces it
+            // clearly rather than saying "done" when nothing was
+            // actually sent.
             return ToolResult(
                 ok = false,
-                output = """{"error":"send_button_not_found","detail":"Opened WhatsApp with the message ready, but couldn't find the send button automatically. Tap Send manually."}""",
+                output = """{"error":"send_button_not_found","detail":"Opened WhatsApp with the message pre-filled, but couldn't auto-tap Send (WhatsApp's UI may have changed). Tap Send manually — the message is ready."}""",
             )
         }
 
@@ -178,8 +202,12 @@ class SendWhatsAppDirectTool @Inject constructor(
     companion object {
         private const val WHATSAPP_PACKAGE = "com.whatsapp"
         private const val PREVIEW_CHARS = 160
-        /** Time given to WhatsApp to render the chat surface after the deep-link launch. */
-        private const val WAIT_FOR_CHAT_MS = 1_200L
+        /** Short wait before we start polling — gives the activity a moment to draw. */
+        private const val INITIAL_WAIT_MS = 400L
+        /** Total poll budget. Cold-start WhatsApp on slow phones needs ~2s. */
+        private const val MAX_WAIT_MS = 3_500L
+        /** Interval between successive attempts during polling. */
+        private const val POLL_INTERVAL_MS = 250L
         /** Time between tapping Send and bringing Mythara back. */
         private const val RETURN_DELAY_MS = 600L
     }

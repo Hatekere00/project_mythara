@@ -196,12 +196,19 @@ class AgentLoop @Inject constructor(
                     "  • If a tool RETURNS the data the user asked for, DO NOT also call open_app to 'show' them the data. Just relay the data in your reply.\n" +
                     "  • Only call open_app, place_call, send_sms_direct, send_whatsapp, tap, swipe, type_text, or any other side-effect tool when the user EXPLICITLY asked for that action. 'list X' / 'show me X' / 'what's on X' = read-only, never launch the app.\n" +
                     "  • Pushing the user out of Mythara mid-conversation is a UX failure. If you need to launch something, say so first and confirm intent on the next turn.\n\n" +
-                    "DIRECT-SEND DEFAULTS — when the user says 'send/text/call/message X to Y' use the DIRECT variants. These run silently in the background and Mythara stays in the foreground:\n" +
-                    "  • 'text mom <message>' → send_sms_direct (SmsManager — fully silent, no UI flash anywhere).\n" +
-                    "  • 'call dad' → place_call_direct (the in-call screen is system-owned and unavoidable).\n" +
-                    "  • 'whatsapp mom <message>' / 'tell mom on whatsapp …' → send_whatsapp_direct (drives WhatsApp via Accessibility for ~2 seconds, then returns to Mythara automatically). Requires Accessibility — if it fails on accessibility_not_granted, fall back to send_whatsapp.\n" +
-                    "  • Use the composer variants (send_sms, place_call, send_whatsapp) ONLY when the user said 'open a draft', 'compose', 'show me a draft' — i.e. they want to review/edit before sending.\n" +
-                    "  • Default is ALWAYS direct.",
+                    "DIRECT-SEND IS THE DEFAULT — DO NOT make the user tap Send themselves.\n" +
+                    "The user has explicitly configured Mythara for direct sending. Picking a composer variant when they said 'send' is a UX failure they've called out explicitly.\n" +
+                    "Map user phrasing → tool like this:\n" +
+                    "  • 'text mom <msg>' / 'tell mom <msg>' / 'sms <msg> to mom' → send_sms_direct\n" +
+                    "    (SmsManager — fully silent, no UI flash anywhere)\n" +
+                    "  • 'call dad' / 'phone dad' → place_call_direct\n" +
+                    "    (in-call screen is system-owned)\n" +
+                    "  • 'whatsapp mom <msg>' / 'wa mom <msg>' / 'message mom on whatsapp' / 'tell mom on whatsapp' → send_whatsapp_direct\n" +
+                    "    (drives WhatsApp via Accessibility for ~2 seconds, then returns to Mythara. The Send button is auto-tapped — user does NOT need to tap anything.)\n" +
+                    "  • 'message mom' with no app specified → default to send_whatsapp_direct if the contact has WhatsApp, else send_sms_direct\n" +
+                    "  • If send_whatsapp_direct returns accessibility_not_granted, tell the user 'I need accessibility access granted to send WhatsApp directly — open Settings to enable, or I can open WhatsApp with the draft ready for you to send'. DO NOT silently fall back to send_whatsapp.\n" +
+                    "  • If send_whatsapp_direct returns send_button_not_found, tell the user 'WhatsApp opened with the message ready but I couldn't find the send button to tap — tap it yourself this time, I'll learn'.\n" +
+                    "Use composer variants (send_sms, place_call, send_whatsapp) ONLY when the user EXPLICITLY asks to 'compose', 'draft', 'open a draft', or 'let me review before sending'. Default is always DIRECT.",
         )
 
         // ElevenLabs audio tags. When the user has the EL TTS route
