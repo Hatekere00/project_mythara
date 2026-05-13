@@ -86,6 +86,7 @@ fun UserAliasesPanel(vm: UserAliasesViewModel = hiltViewModel()) {
     var manualOpen by remember { mutableStateOf(false) }
     var manualName by remember { mutableStateOf("") }
     var manualPhone by remember { mutableStateOf("") }
+    var multiPickerOpen by remember { mutableStateOf(false) }
 
     val contactPicker = rememberContactPicker { picked ->
         if (picked != null) {
@@ -164,14 +165,27 @@ fun UserAliasesPanel(vm: UserAliasesViewModel = hiltViewModel()) {
         }
 
         Spacer(Modifier.height(8.dp))
+        // Primary action — multi-select sheet. Built for the exact
+        // use case of "I have 3 old numbers, pick them all at once".
         Button(
-            onClick = { contactPicker.launch(Unit) },
+            onClick = { multiPickerOpen = true },
             colors = ButtonDefaults.buttonColors(
                 containerColor = MytharaColors.Charple,
                 contentColor = MytharaColors.Fg,
             ),
         ) {
-            Text("${Glyph.Arrow} pick from contacts (add me)")
+            Text("${Glyph.Arrow} pick contacts (multi)")
+        }
+        Spacer(Modifier.height(6.dp))
+        // Secondary — system single picker. Useful when you don't
+        // want to grant READ_CONTACTS (system picker doesn't require
+        // it; the multi-sheet does).
+        TextButton(onClick = { contactPicker.launch(Unit) }) {
+            Text(
+                text = "${Glyph.Arrow} or pick one at a time (no extra permission)",
+                color = MytharaColors.FgMute,
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
         Spacer(Modifier.height(6.dp))
         if (!manualOpen) {
@@ -232,5 +246,15 @@ fun UserAliasesPanel(vm: UserAliasesViewModel = hiltViewModel()) {
                 }
             }
         }
+    }
+
+    if (multiPickerOpen) {
+        MultiContactPickerSheet(
+            title = "pick the contacts that are YOU",
+            onDismiss = { multiPickerOpen = false },
+            onApply = { picked ->
+                picked.forEach { vm.add(it.displayName, it.phone) }
+            },
+        )
     }
 }
