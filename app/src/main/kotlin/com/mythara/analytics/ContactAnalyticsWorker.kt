@@ -42,6 +42,7 @@ class ContactAnalyticsWorker @AssistedInject constructor(
     @Assisted ctx: Context,
     @Assisted params: WorkerParameters,
     private val builder: ContactAnalyticsBuilder,
+    private val selfPersonaBuilder: com.mythara.persona.SelfPersonaBuilder,
 ) : CoroutineWorker(ctx, params) {
 
     override suspend fun doWork(): Result {
@@ -54,6 +55,10 @@ class ContactAnalyticsWorker @AssistedInject constructor(
             "daily contact-analytics rebuild done: contacts=${report.totalContacts} " +
                 "rebuilt=${report.rebuilt} skipped=${report.skippedNoData} ms=${report.durationMs}",
         )
+        // Daily self-profile refresh — same cadence as contact analysis.
+        // Self-gates on data + freshness, so this is cheap most days.
+        runCatching { selfPersonaBuilder.rebuild() }
+            .onFailure { Log.w(TAG, "self-profile rebuild failed: ${it.message}") }
         return Result.success()
     }
 

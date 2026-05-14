@@ -45,6 +45,8 @@ class MessagePersonaExtractor @Inject constructor(
     private val gemma: GemmaExtractor,
     private val userNameStore: com.mythara.data.UserNameStore,
     private val userAliases: com.mythara.data.UserAliasesStore,
+    /** dagger.Lazy — only needed at the tail of an import. */
+    private val selfPersonaBuilder: dagger.Lazy<com.mythara.persona.SelfPersonaBuilder>,
 ) {
     data class Report(
         val ok: Boolean,
@@ -191,7 +193,12 @@ class MessagePersonaExtractor @Inject constructor(
                         ))
                 if (isUser) userKeys.add(name)
             }
-            val filtered = byContact.filterNot { (name, _) -> name in userKeys }
+            // Drop the user's own aliases AND promotional / automated
+            // senders (short-codes, no-reply, brands) — personality
+            // analysis only runs on real, named people.
+            val filtered = byContact
+                .filterNot { (name, _) -> name in userKeys }
+                .filter { (name, _) -> com.mythara.analytics.ContactClassifier.isPersonal(name) }
             val topContacts = filtered.take(MAX_CONTACTS_PER_IMPORT)
             for ((contactName, count) in topContacts) {
                 if (count < MIN_PER_CONTACT_MESSAGES) continue
@@ -210,6 +217,11 @@ class MessagePersonaExtractor @Inject constructor(
                 Log.d(TAG, "user-alias filter excluded ${byContact.size - filtered.size} candidates (aliases=${aliasList.size}, legacy=${if (legacyName.isBlank()) "-" else legacyName})")
             }
         }
+
+        // A fresh import is the strongest new signal about the user —
+        // re-run the self Big Five so About Me reflects it right away.
+        runCatching { selfPersonaBuilder.get().rebuild(force = true) }
+            .onFailure { Log.w(TAG, "self-persona rebuild after import failed: ${it.message}") }
 
         return Report(
             ok = true,

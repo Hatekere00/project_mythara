@@ -11,6 +11,8 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
@@ -102,6 +104,14 @@ data class ContactProfileRow(
      * Repopulated on every successful Big Five inference pass.
      */
     @ColumnInfo(name = "personality_insights") val personalityInsights: String? = null,
+    /**
+     * Absolute path of an app-side avatar override the user picked
+     * inside Mythara (stored under filesDir/contact_photos/). Purely
+     * local — never written back to the phone's address book. Null =
+     * fall back to the phone contact's photo, then the initial-letter
+     * avatar. Preserved across rebuilds like [userNotes].
+     */
+    @ColumnInfo(name = "photo_uri") val photoUri: String? = null,
     /** Last time the analytics builder produced / updated this row. */
     @ColumnInfo(name = "last_built_ms") val lastBuiltMs: Long = 0,
 ) {
@@ -137,6 +147,14 @@ interface ContactProfileDao {
     @Query("UPDATE contact_profiles SET user_notes = :notes WHERE name_key = :key")
     suspend fun updateUserNotes(key: String, notes: String?)
 
+    /**
+     * Update only the app-side avatar override path. Partial update —
+     * like [updateUserNotes], avoids racing the analytics builder's
+     * full-row upsert.
+     */
+    @Query("UPDATE contact_profiles SET photo_uri = :uri WHERE name_key = :key")
+    suspend fun updatePhotoUri(key: String, uri: String?)
+
     @Query("DELETE FROM contact_profiles WHERE name_key = :key")
     suspend fun deleteByKey(key: String)
 
@@ -144,15 +162,25 @@ interface ContactProfileDao {
     suspend fun clear()
 }
 
-@Database(entities = [ContactProfileRow::class], version = 4, exportSchema = false)
+@Database(entities = [ContactProfileRow::class], version = 5, exportSchema = false)
 abstract class ContactProfilesDb : RoomDatabase() {
     abstract fun profiles(): ContactProfileDao
+}
+
+/** v4 → v5: adds the nullable `photo_uri` app-override column. A real
+ *  migration (not destructive fallback) so user-authored `user_notes`
+ *  survive the schema bump. */
+internal val MIGRATION_CONTACTS_4_5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE contact_profiles ADD COLUMN photo_uri TEXT")
+    }
 }
 
 @Singleton
 class ContactProfileRepository @Inject constructor(@ApplicationContext ctx: Context) {
     private val db: ContactProfilesDb =
         Room.databaseBuilder(ctx, ContactProfilesDb::class.java, "mythara_contact_profiles.db")
+            .addMigrations(MIGRATION_CONTACTS_4_5)
             .fallbackToDestructiveMigration()
             .build()
     val dao: ContactProfileDao = db.profiles()

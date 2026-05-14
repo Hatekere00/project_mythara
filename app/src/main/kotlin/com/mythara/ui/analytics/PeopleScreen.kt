@@ -1,5 +1,12 @@
 package com.mythara.ui.analytics
 
+import android.content.Context
+import android.graphics.Bitmap
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -12,6 +19,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -31,6 +39,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,6 +49,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -51,6 +63,7 @@ import com.mythara.analytics.ContactProfileRow
 import com.mythara.ui.theme.Glyph
 import com.mythara.ui.theme.MytharaColors
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -69,6 +82,7 @@ import javax.inject.Inject
 class PeopleViewModel @Inject constructor(
     private val repo: ContactProfileRepository,
     private val builder: ContactAnalyticsBuilder,
+    @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
     val profiles: StateFlow<List<ContactProfileRow>> =
         repo.dao.observeAll().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -119,6 +133,36 @@ class PeopleViewModel @Inject constructor(
         viewModelScope.launch {
             val normalized = notes.trim().takeIf { it.isNotEmpty() }
             runCatching { repo.dao.updateUserNotes(nameKey, normalized) }
+            // Re-run Gemma for just this contact so the relationship
+            // summary / key points / personality insights reflect the
+            // new notes right away, instead of waiting for the next
+            // full rebuild. Cheap — one contact, not the whole list.
+            if (!_refreshing.value) {
+                _refreshing.value = true
+                runCatching { builder.rebuildContact(nameKey) }
+                _refreshing.value = false
+            }
+        }
+    }
+
+    /**
+     * Set an app-side avatar override for a contact from a picked
+     * image. The image is copied + downscaled into the app's private
+     * files dir — the phone's address book is never touched.
+     */
+    fun setContactPhoto(nameKey: String, src: Uri) {
+        viewModelScope.launch {
+            val path = ContactPhoto.importOverride(appContext, nameKey, src)
+            runCatching { repo.dao.updatePhotoUri(nameKey, path) }
+        }
+    }
+
+    /** Drop the app-side override; the row falls back to the phone
+     *  contact's photo (or the initial-letter avatar). */
+    fun clearContactPhoto(nameKey: String) {
+        viewModelScope.launch {
+            ContactPhoto.clearOverride(appContext, nameKey)
+            runCatching { repo.dao.updatePhotoUri(nameKey, null) }
         }
     }
 }
@@ -153,7 +197,10 @@ fun PeopleScreen(
             .padding(WindowInsets.systemBars.asPaddingValues())
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             TextButton(onClick = {
                 if (selected != null) selectedKey = null else onBack()
             }) {
@@ -165,25 +212,10 @@ fun PeopleScreen(
                 color = MytharaColors.Charple,
                 style = MaterialTheme.typography.titleMedium,
             )
-        }
-        Spacer(Modifier.height(12.dp))
-
-        if (selected != null) {
-            ProfileDetail(
-                p = selected,
-                onSaveNotes = { notes -> vm.saveUserNotes(selected.nameKey, notes) },
-            )
-        } else {
-            ProfileList(
-                profiles = profiles,
-                onTap = { selectedKey = it.nameKey },
-            )
-            Spacer(Modifier.height(10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+            // Refresh lives in the header so it stays visible no matter
+            // how long the contact list grows.
+            if (selected == null) {
+                Spacer(Modifier.weight(1f))
                 Button(
                     onClick = { vm.rebuild(force = false) },
                     enabled = !refreshing,
@@ -191,9 +223,36 @@ fun PeopleScreen(
                         containerColor = MytharaColors.Charple,
                         contentColor = MytharaColors.Fg,
                     ),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
                 ) {
-                    Text(if (refreshing) "${Glyph.Ellipsis} refreshing" else "${Glyph.Refresh} refresh")
+                    Text(
+                        text = if (refreshing) "${Glyph.Ellipsis} refreshing" else "${Glyph.Refresh} refresh",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+
+        if (selected != null) {
+            ProfileDetail(
+                p = selected,
+                onSaveNotes = { notes -> vm.saveUserNotes(selected.nameKey, notes) },
+                onSetPhoto = { uri -> vm.setContactPhoto(selected.nameKey, uri) },
+                onClearPhoto = { vm.clearContactPhoto(selected.nameKey) },
+            )
+        } else {
+            ProfileList(
+                profiles = profiles,
+                onTap = { selectedKey = it.nameKey },
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 TextButton(
                     onClick = { vm.rebuild(force = true) },
                     enabled = !refreshing,
@@ -255,6 +314,7 @@ fun PeopleScreen(
 private fun ProfileList(
     profiles: List<ContactProfileRow>,
     onTap: (ContactProfileRow) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     if (profiles.isEmpty()) {
         Text(
@@ -266,7 +326,7 @@ private fun ProfileList(
     }
 
     LazyColumn(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(profiles, key = { it.nameKey }) { p ->
@@ -293,7 +353,7 @@ private fun ProfileRow(p: ContactProfileRow, onTap: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Avatar(p.displayName, p.isFavorite)
+                Avatar(p)
                 Spacer(Modifier.width(10.dp))
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -355,7 +415,13 @@ private fun ProfileRow(p: ContactProfileRow, onTap: () -> Unit) {
 private fun ProfileDetail(
     p: ContactProfileRow,
     onSaveNotes: (String) -> Unit,
+    onSetPhoto: (Uri) -> Unit,
+    onClearPhoto: () -> Unit,
 ) {
+    val photoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri -> if (uri != null) onSetPhoto(uri) }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -363,7 +429,7 @@ private fun ProfileDetail(
     ) {
         // Header
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Avatar(p.displayName, p.isFavorite, large = true)
+            Avatar(p, large = true)
             Spacer(Modifier.width(12.dp))
             Column {
                 Text(
@@ -380,6 +446,32 @@ private fun ProfileDetail(
                 }
                 p.phone?.takeIf { it.isNotBlank() }?.let {
                     Text(it, color = MytharaColors.FgDim, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+
+        // Photo controls — set an app-only avatar override (or drop it
+        // back to the phone contact photo). Never touches the phone's
+        // address book.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = {
+                photoPicker.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                )
+            }) {
+                Text(
+                    text = "${Glyph.DiamondOutline} ${if (p.photoUri != null) "change photo" else "set photo"}",
+                    color = MytharaColors.Bok,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            if (p.photoUri != null) {
+                TextButton(onClick = onClearPhoto) {
+                    Text(
+                        text = "${Glyph.Cross} remove",
+                        color = MytharaColors.Sriracha,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
             }
         }
@@ -684,11 +776,20 @@ private fun big5Color(label: String, value: Double): Color = when {
     else -> MytharaColors.Charple
 }
 
+/**
+ * Contact avatar. Resolves an image via [ContactPhoto] — app-side
+ * override first, then the phone contact's photo — and falls back to
+ * the initial-letter tile when neither exists.
+ */
 @Composable
-private fun Avatar(name: String, isFavorite: Boolean, large: Boolean = false) {
-    val initial = name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+private fun Avatar(profile: ContactProfileRow, large: Boolean = false) {
+    val ctx = LocalContext.current
     val side = if (large) 48.dp else 36.dp
-    val color = if (isFavorite) MytharaColors.Charple else MytharaColors.SurfaceHigh
+    val color = if (profile.isFavorite) MytharaColors.Charple else MytharaColors.SurfaceHigh
+    var bitmap by remember(profile.nameKey, profile.photoUri) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(profile.nameKey, profile.photoUri, profile.phone) {
+        bitmap = ContactPhoto.resolveBitmap(ctx, profile)
+    }
     Box(
         modifier = Modifier
             .size(side)
@@ -696,11 +797,21 @@ private fun Avatar(name: String, isFavorite: Boolean, large: Boolean = false) {
             .background(color),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = initial,
-            color = MytharaColors.Fg,
-            style = if (large) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleSmall,
-        )
+        val bmp = bitmap
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = profile.displayName,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            Text(
+                text = profile.displayName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?",
+                color = MytharaColors.Fg,
+                style = if (large) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleSmall,
+            )
+        }
     }
 }
 

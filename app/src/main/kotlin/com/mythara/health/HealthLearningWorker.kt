@@ -63,9 +63,14 @@ class HealthLearningWorker @AssistedInject constructor(
     @Assisted params: WorkerParameters,
     private val vault: LearningVault,
     private val deviceIdStore: DeviceIdStore,
+    private val historyBuilder: HealthHistoryBuilder,
 ) : CoroutineWorker(ctx, params) {
 
     override suspend fun doWork(): Result {
+        // Long-range history pull — self-gates to ~once a day, so
+        // calling it on every 6-hourly run is cheap.
+        runCatching { historyBuilder.build() }
+            .onFailure { Log.w(TAG, "health history build failed: ${it.message}") }
         return runCatching {
             val sdkStatus = HealthConnectClient.getSdkStatus(ctx)
             if (sdkStatus != HealthConnectClient.SDK_AVAILABLE) {

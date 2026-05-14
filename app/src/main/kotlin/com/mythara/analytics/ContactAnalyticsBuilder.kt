@@ -59,6 +59,7 @@ class ContactAnalyticsBuilder @Inject constructor(
     private val favorites: FavoritesStore,
     private val gemma: GemmaExtractor,
     private val userAliases: com.mythara.data.UserAliasesStore,
+    private val analysisInstructions: com.mythara.analysis.AnalysisInstructionStore,
 ) {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
@@ -139,6 +140,9 @@ class ContactAnalyticsBuilder @Inject constructor(
         val byContact = groupByContact(all)
         val favs = runCatching { favorites.list() }.getOrDefault(emptyList())
         val favByKey = favs.associateBy { it.name.trim().lowercase() }
+        // Self-evolving analysis guidelines (taught via web reads /
+        // save_analysis_instruction) — prepended to every Gemma prompt.
+        val instructionBlock = runCatching { analysisInstructions.promptBlock("contacts") }.getOrDefault("")
 
         var rebuilt = 0
         var skipped = 0
@@ -146,6 +150,7 @@ class ContactAnalyticsBuilder @Inject constructor(
             if (rows.isEmpty()) { skipped++; continue }
             val existing = repo.dao.byKey(nameKey)
             val displayName = pickDisplayName(rows, favByKey[nameKey]?.name)
+            val phone = favByKey[nameKey]?.digits?.takeIf { it.isNotBlank() } ?: existing?.phone
             val firstSeen = rows.minOf { it.tsMillis }
             val lastSeen = rows.maxOf { it.tsMillis }
             val imageCount = rows.count {
@@ -154,20 +159,31 @@ class ContactAnalyticsBuilder @Inject constructor(
             }
             val topics = extractTopTopics(rows)
 
-            val needsInference = force ||
-                existing == null ||
-                rows.size >= ContactProfileRow.MIN_BIG_FIVE_SAMPLE &&
-                (existing.openness == null ||
-                    (System.currentTimeMillis() - (existing.bigFiveLastUpdatedMs ?: 0)) > REINFER_INTERVAL_MS ||
-                    rows.size >= (existing.bigFiveSampleSize * REINFER_GROW_RATIO).toInt())
+            // Promotional / automated senders (short-codes, no-reply,
+            // brands) still get a profile row with counts, but we never
+            // run a personality inference on them — a fake Big Five for
+            // "HDFC BANK" is noise. Personality analysis stays scoped to
+            // real, named people.
+            val isPersonal = ContactClassifier.isPersonal(displayName, phone)
+
+            val needsInference = isPersonal && (
+                force ||
+                    existing == null ||
+                    rows.size >= ContactProfileRow.MIN_BIG_FIVE_SAMPLE &&
+                    (existing.openness == null ||
+                        (System.currentTimeMillis() - (existing.bigFiveLastUpdatedMs ?: 0)) > REINFER_INTERVAL_MS ||
+                        rows.size >= (existing.bigFiveSampleSize * REINFER_GROW_RATIO).toInt())
+                )
 
             val infer = if (needsInference && rows.size >= ContactProfileRow.MIN_BIG_FIVE_SAMPLE && gemma.isReady()) {
                 Log.d(TAG, "inference for $displayName: rows=${rows.size} gemmaReady=${gemma.isReady()} → running")
-                runCatching { runGemmaInference(displayName, rows) }.getOrNull()
+                runCatching {
+                    runGemmaInference(displayName, rows, existing?.userNotes, instructionBlock)
+                }.getOrNull()
             } else {
                 Log.d(
                     TAG,
-                    "inference for $displayName SKIPPED — needsInference=$needsInference " +
+                    "inference for $displayName SKIPPED — personal=$isPersonal needsInference=$needsInference " +
                         "rows=${rows.size} (need ≥${ContactProfileRow.MIN_BIG_FIVE_SAMPLE}) " +
                         "gemmaReady=${gemma.isReady()}",
                 )
@@ -177,7 +193,7 @@ class ContactAnalyticsBuilder @Inject constructor(
             val row = ContactProfileRow(
                 nameKey = nameKey,
                 displayName = displayName,
-                phone = favByKey[nameKey]?.digits?.takeIf { it.isNotBlank() } ?: existing?.phone,
+                phone = phone,
                 isFavorite = favByKey[nameKey] != null && favByKey[nameKey]!!.enabled,
                 toneLabel = favByKey[nameKey]?.toneLabel ?: existing?.toneLabel,
                 firstSeenMs = firstSeen,
@@ -243,6 +259,54 @@ class ContactAnalyticsBuilder @Inject constructor(
             cleanedProfiles = cleanup.cleanedProfiles,
             cleanedVaultRows = cleanup.cleanedVaultRows,
         )
+    }
+
+    /**
+     * Re-run Gemma inference for a SINGLE contact — used right after
+     * the user edits that contact's notes, so the relationship
+     * summary / key points / personality insights fold the new notes
+     * in immediately instead of waiting for the next full rebuild.
+     *
+     * Always forces inference. No-ops (returns false) when the contact
+     * has too few vault rows to produce a meaningful read or the Gemma
+     * model isn't loaded — the notes are still persisted on the row
+     * regardless; they'll be picked up by the next eligible rebuild.
+     */
+    suspend fun rebuildContact(nameKey: String): Boolean = withContext(Dispatchers.IO) {
+        val key = nameKey.trim().lowercase()
+        val existing = repo.dao.byKey(key) ?: return@withContext false
+        val all = runCatching { vault.listAll() }.getOrDefault(emptyList())
+        val rows = groupByContact(all)[key].orEmpty()
+        if (rows.size < ContactProfileRow.MIN_BIG_FIVE_SAMPLE || !gemma.isReady()) {
+            Log.d(TAG, "rebuildContact($key) skipped — rows=${rows.size} gemmaReady=${gemma.isReady()}")
+            return@withContext false
+        }
+        val instructionBlock = runCatching { analysisInstructions.promptBlock("contacts") }.getOrDefault("")
+        val infer = runCatching {
+            runGemmaInference(existing.displayName, rows, existing.userNotes, instructionBlock)
+        }.getOrNull() ?: return@withContext false
+        repo.dao.upsert(
+            existing.copy(
+                relationshipSummary = infer.summary ?: existing.relationshipSummary,
+                openness = infer.openness ?: existing.openness,
+                conscientiousness = infer.conscientiousness ?: existing.conscientiousness,
+                extraversion = infer.extraversion ?: existing.extraversion,
+                agreeableness = infer.agreeableness ?: existing.agreeableness,
+                neuroticism = infer.neuroticism ?: existing.neuroticism,
+                bigFiveSampleSize = rows.size,
+                bigFiveLastUpdatedMs = System.currentTimeMillis(),
+                notableTraitsJson = json.encodeToString(
+                    ListSerializer(String.serializer()), infer.notableTraits,
+                ),
+                keyPointsJson = json.encodeToString(
+                    ListSerializer(String.serializer()), infer.keyPoints,
+                ),
+                personalityInsights = infer.personalityInsights ?: existing.personalityInsights,
+                lastBuiltMs = System.currentTimeMillis(),
+            ),
+        )
+        Log.d(TAG, "rebuildContact($key) done — re-inferred from ${rows.size} rows + notes")
+        true
     }
 
     private fun groupByContact(rows: List<LearningEntity>): Map<String, List<LearningEntity>> {
@@ -315,8 +379,19 @@ class ContactAnalyticsBuilder @Inject constructor(
      * context window is tight and the structured JSON output for
      * Big Five gets cleaner when it doesn't share the prompt with
      * a paragraph generation task.
+     *
+     * [userNotes] — the user's own free-form notes on this contact.
+     * When present they're prepended to every prompt as AUTHORITATIVE
+     * context, so the generated relationship summary, key points, and
+     * personality insights are described THROUGH the user's notes
+     * rather than from the raw snippets alone.
      */
-    private suspend fun runGemmaInference(displayName: String, rows: List<LearningEntity>): InferenceResult {
+    private suspend fun runGemmaInference(
+        displayName: String,
+        rows: List<LearningEntity>,
+        userNotes: String?,
+        instructionBlock: String = "",
+    ): InferenceResult {
         // Take the most informative slice: concatenate the most-recent
         // up to MAX_CONTENT_CHARS chars of vault content. Older rows
         // are less representative of the current relationship state.
@@ -331,21 +406,26 @@ class ContactAnalyticsBuilder @Inject constructor(
             return InferenceResult(null, null, null, null, null, null, emptyList(), emptyList(), null)
         }
 
+        val notes = userNotes?.trim()?.takeIf { it.isNotEmpty() }
+        // Combined prompt preamble: self-evolving analysis guidelines
+        // first, then the user's authoritative notes on this contact.
+        val preamble = instructionBlock + notesBlock(notes)
+
         val summary = runCatching {
             gemma.summarise(
-                buildSummaryPrompt(displayName, text),
+                buildSummaryPrompt(displayName, text, preamble, hasNotes = notes != null),
                 maxLen = SUMMARY_MAX_LEN,
             )
         }.getOrNull()
 
-        val bigFive = runCatching { runBigFive(displayName, text) }.getOrNull()
-        val keyPoints = runCatching { runKeyPoints(displayName, text) }.getOrDefault(emptyList())
+        val bigFive = runCatching { runBigFive(displayName, text, preamble) }.getOrNull()
+        val keyPoints = runCatching { runKeyPoints(displayName, text, preamble) }.getOrDefault(emptyList())
         // Personality insights are downstream of Big Five — they
         // synthesise the scores + traits into actionable messaging
         // guidance. Only run when Big Five succeeded; otherwise
         // there's nothing to synthesise.
         val personalityInsights = if (bigFive != null) {
-            runCatching { runPersonalityInsights(displayName, bigFive) }.getOrNull()
+            runCatching { runPersonalityInsights(displayName, bigFive, preamble) }.getOrNull()
         } else null
 
         return InferenceResult(
@@ -374,16 +454,22 @@ class ContactAnalyticsBuilder @Inject constructor(
     private suspend fun runPersonalityInsights(
         displayName: String,
         bigFive: BigFiveOut,
+        preamble: String,
     ): String? {
-        val prompt = buildPersonalityInsightsPrompt(displayName, bigFive)
+        val prompt = buildPersonalityInsightsPrompt(displayName, bigFive, preamble)
         val raw = runCatching { gemma.runRaw(prompt, maxLen = INSIGHTS_MAX_LEN) }.getOrNull()
             ?: return null
         return raw.trim().takeIf { it.isNotEmpty() && it.length >= 20 }
     }
 
-    private fun buildPersonalityInsightsPrompt(displayName: String, bigFive: BigFiveOut): String {
+    private fun buildPersonalityInsightsPrompt(
+        displayName: String,
+        bigFive: BigFiveOut,
+        preamble: String,
+    ): String {
         val traits = bigFive.traits.joinToString(", ")
-        return "Given this Big Five read on $displayName:\n" +
+        return preamble +
+            "Given this Big Five read on $displayName:\n" +
             "  openness=${fmtScore(bigFive.openness)}\n" +
             "  conscientiousness=${fmtScore(bigFive.conscientiousness)}\n" +
             "  extraversion=${fmtScore(bigFive.extraversion)}\n" +
@@ -392,7 +478,20 @@ class ContactAnalyticsBuilder @Inject constructor(
             "  notable traits: $traits\n\n" +
             "Write ONE concise paragraph (60-90 words) of actionable messaging guidance for someone writing back to $displayName. " +
             "Lead with 'How to message $displayName:' then a few semicolon-separated tips covering: tone, length, what to lean into, what to avoid. " +
+            "Where the user's notes above are relevant, weave them in — they take precedence over the trait scores. " +
             "No bullet points, no markdown, no preamble. Just the paragraph."
+    }
+
+    /**
+     * Renders the user's contact notes as an authoritative prompt
+     * preamble. Empty string when there are no notes, so callers can
+     * unconditionally prepend it.
+     */
+    private fun notesBlock(notes: String?): String {
+        val n = notes?.trim()?.takeIf { it.isNotEmpty() } ?: return ""
+        return "The user has personally written these notes about this person. Treat them as AUTHORITATIVE — " +
+            "they override anything you'd otherwise infer from the snippets, and your output should reflect them:\n" +
+            "```\n$n\n```\n\n"
     }
 
     private fun fmtScore(v: Double?): String = when {
@@ -412,8 +511,8 @@ class ContactAnalyticsBuilder @Inject constructor(
      * conversational prep points (WHAT'S HAPPENING). Surfaced at the
      * top of the contact detail screen.
      */
-    private suspend fun runKeyPoints(displayName: String, text: String): List<String> {
-        val prompt = buildKeyPointsPrompt(displayName, text)
+    private suspend fun runKeyPoints(displayName: String, text: String, preamble: String): List<String> {
+        val prompt = buildKeyPointsPrompt(displayName, text, preamble)
         // Use runRaw — summarise() wraps the prompt as content-to-be-
         // summarised, which would collapse the JSON-array instruction
         // into a paragraph (same bug Big Five hit before this fix).
@@ -450,8 +549,10 @@ class ContactAnalyticsBuilder @Inject constructor(
         return null
     }
 
-    private fun buildKeyPointsPrompt(displayName: String, text: String): String =
+    private fun buildKeyPointsPrompt(displayName: String, text: String, preamble: String): String =
+        preamble +
         "Extract 3-7 SHORT actionable points the user would want to remember BEFORE their next conversation with $displayName. " +
+            "If the user's notes above contain anything in this category, include it FIRST. " +
             "Examples of good points:\n" +
             "  • recent life events (\"started a new job at Stripe\", \"just had a baby\", \"moving to Boston\")\n" +
             "  • upcoming dates (\"birthday on May 23\", \"trip to Spain next month\", \"exam Friday\")\n" +
@@ -482,8 +583,8 @@ class ContactAnalyticsBuilder @Inject constructor(
      * "traits" array. Parses forgivingly — picks the first balanced
      * { ... } in the response.
      */
-    private suspend fun runBigFive(displayName: String, text: String): BigFiveOut? {
-        val prompt = buildBigFivePrompt(displayName, text)
+    private suspend fun runBigFive(displayName: String, text: String, preamble: String): BigFiveOut? {
+        val prompt = buildBigFivePrompt(displayName, text, preamble)
         // Reuse extractWithMood as a structured Gemma call; we ignore
         // the facts/mood it returns and look for the raw JSON in the
         // model's response by querying gemma.summarise (which returns
@@ -543,13 +644,22 @@ class ContactAnalyticsBuilder @Inject constructor(
         return null
     }
 
-    private fun buildSummaryPrompt(displayName: String, text: String): String =
-        "Summarise how the user relates to $displayName, based on the captured snippets below. " +
+    private fun buildSummaryPrompt(
+        displayName: String,
+        text: String,
+        preamble: String,
+        hasNotes: Boolean,
+    ): String =
+        preamble +
+        "Summarise how the user relates to $displayName, based on the captured snippets below" +
+            (if (hasNotes) " AND the user's notes above" else "") + ". " +
             "3-4 sentences. Focus on: typical topics, frequency / cadence of interaction, the user's tone with them, " +
-            "any recurring patterns. Third-person, referring to the user as 'the user' and the other person as '$displayName'. " +
-            "Don't invent — only what's in the text.\n\nSnippets:\n```\n$text\n```\n\nReturn the summary now."
+            "any recurring patterns. Where the user's notes describe the relationship, lead with that. " +
+            "Third-person, referring to the user as 'the user' and the other person as '$displayName'. " +
+            "Don't invent — only what's in the notes or the text.\n\nSnippets:\n```\n$text\n```\n\nReturn the summary now."
 
-    private fun buildBigFivePrompt(displayName: String, text: String): String =
+    private fun buildBigFivePrompt(displayName: String, text: String, preamble: String): String =
+        preamble +
         "Estimate $displayName's Big Five personality traits from the conversation snippets below, AS OBSERVED by the user. " +
             "Return ONLY a JSON object with five fields (openness, conscientiousness, extraversion, agreeableness, neuroticism), each a number 0.0 to 1.0, " +
             "plus a 'traits' field: an array of 3-6 short observed-trait strings (e.g. 'curious', 'pragmatic', 'warm', 'easily-stressed'). " +

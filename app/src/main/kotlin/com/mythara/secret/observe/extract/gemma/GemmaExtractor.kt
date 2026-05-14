@@ -10,6 +10,8 @@ import com.google.ai.edge.litertlm.Message
 import com.mythara.secret.observe.extract.LearningExtractor
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -61,6 +63,16 @@ class GemmaExtractor @Inject constructor(
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     /**
+     * Serialises ALL inference. The LiteRT-LM engine supports a single
+     * conversation/session at a time — concurrent callers (the persona
+     * builders, contact analytics, the day-summary builder, episodic
+     * promotion …) would otherwise collide with
+     * "A session already exists". Every inference path takes this lock,
+     * so callers just queue rather than crash.
+     */
+    private val inferenceLock = Mutex()
+
+    /**
      * What [extractWithMood] returns: durable facts (same shape as
      * the heuristic extractor) plus a single mood label inferred from
      * the whole transcript. Mood labels are constrained to a small
@@ -83,12 +95,14 @@ class GemmaExtractor @Inject constructor(
         if (!store.isAvailable()) return Result(emptyList(), null)
         return withContext(Dispatchers.Default) {
             runCatching {
-                val eng = ensureEngine() ?: return@runCatching Result(emptyList(), null)
-                val prompt = buildPrompt(transcript)
-                val reply: Message = eng.createConversation().use { conv ->
-                    conv.sendMessage(Message.of(prompt))
+                inferenceLock.withLock {
+                    val eng = ensureEngine() ?: return@withLock Result(emptyList(), null)
+                    val prompt = buildPrompt(transcript)
+                    val reply: Message = eng.createConversation().use { conv ->
+                        conv.sendMessage(Message.of(prompt))
+                    }
+                    parseResult(reply.text())
                 }
-                parseResult(reply.text())
             }.getOrElse { e ->
                 Log.w(TAG, "extract failed: ${e.message}")
                 Result(emptyList(), null)
@@ -115,12 +129,14 @@ class GemmaExtractor @Inject constructor(
         if (!store.isAvailable()) return null
         return withContext(Dispatchers.Default) {
             runCatching {
-                val eng = ensureEngine() ?: return@runCatching null
-                val prompt = buildSummarisePrompt(text)
-                val reply: Message = eng.createConversation().use { conv ->
-                    conv.sendMessage(Message.of(prompt))
+                inferenceLock.withLock {
+                    val eng = ensureEngine() ?: return@withLock null
+                    val prompt = buildSummarisePrompt(text)
+                    val reply: Message = eng.createConversation().use { conv ->
+                        conv.sendMessage(Message.of(prompt))
+                    }
+                    reply.text().trim().take(maxLen).ifBlank { null }
                 }
-                reply.text().trim().take(maxLen).ifBlank { null }
             }.getOrElse { e ->
                 Log.w(TAG, "summarise failed: ${e.message}")
                 null
@@ -151,11 +167,13 @@ class GemmaExtractor @Inject constructor(
         if (!store.isAvailable()) return null
         return withContext(Dispatchers.Default) {
             runCatching {
-                val eng = ensureEngine() ?: return@runCatching null
-                val reply: Message = eng.createConversation().use { conv ->
-                    conv.sendMessage(Message.of(prompt))
+                inferenceLock.withLock {
+                    val eng = ensureEngine() ?: return@withLock null
+                    val reply: Message = eng.createConversation().use { conv ->
+                        conv.sendMessage(Message.of(prompt))
+                    }
+                    reply.text().trim().take(maxLen).ifBlank { null }
                 }
-                reply.text().trim().take(maxLen).ifBlank { null }
             }.getOrElse { e ->
                 Log.w(TAG, "runRaw failed: ${e.message}")
                 null

@@ -1,0 +1,814 @@
+package com.mythara.ui.about
+
+import android.content.Context
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.health.connect.client.PermissionController
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.mythara.analytics.ContactClassifier
+import com.mythara.analytics.ContactProfileRepository
+import com.mythara.analytics.ContactProfileRow
+import com.mythara.health.HealthAccess
+import com.mythara.memory.Tier
+import com.mythara.persona.SelfPersonaBuilder
+import com.mythara.persona.UsageAccessHelper
+import com.mythara.persona.UsageStatsCollector
+import com.mythara.secret.observe.vault.LearningEntity
+import com.mythara.secret.observe.vault.LearningVault
+import com.mythara.ui.theme.Glyph
+import com.mythara.ui.theme.MytharaColors
+import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import javax.inject.Inject
+
+/**
+ * "About Me" — a single self-profile surface aggregating everything
+ * Mythara has learned about the user:
+ *  - the user's own Big Five (from imported WhatsApp/SMS history +
+ *    health metrics, via [SelfPersonaBuilder])
+ *  - persona analysis (messaging style, app rhythm)
+ *  - health analytics — watch HR + a rolling 24h snapshot + a
+ *    long-range 6-month history
+ *  - recommended people — the contacts that read as most genuine,
+ *    re-ranked from the daily contact analysis
+ *  - suggested apps — from on-device usage stats
+ *  - heart-rate ↔ contact correlations, device sensors, and the
+ *    facts the user explicitly asked Lumi to remember
+ *
+ * Read-only — the background workers populate the vault; this screen
+ * surfaces the digest. The header refresh also kicks a self-profile
+ * rebuild.
+ */
+@HiltViewModel
+class AboutMeViewModel @Inject constructor(
+    @ApplicationContext private val appContext: Context,
+    private val vault: LearningVault,
+    private val contactRepo: ContactProfileRepository,
+    private val usageCollector: UsageStatsCollector,
+    private val usageAccess: UsageAccessHelper,
+    private val selfPersonaBuilder: SelfPersonaBuilder,
+) : ViewModel() {
+
+    data class HrSummary(
+        val count: Int,
+        val latestBpm: Int?,
+        val avgBpm: Int?,
+        val minBpm: Int?,
+        val maxBpm: Int?,
+        val latestMs: Long?,
+    )
+
+    data class SelfBigFive(
+        val openness: Double,
+        val conscientiousness: Double,
+        val extraversion: Double,
+        val agreeableness: Double,
+        val neuroticism: Double,
+        val traits: List<String>,
+        val insights: String,
+        val sampleFacts: Int,
+    )
+
+    data class HealthHistory(
+        val windowDays: Int,
+        val headline: String,
+        val trend: String?,
+        val weight: String?,
+    )
+
+    data class RecommendedPerson(val name: String, val reason: String)
+    data class SuggestedApp(val label: String, val detail: String)
+
+    data class Ui(
+        val loading: Boolean = true,
+        val selfBigFive: SelfBigFive? = null,
+        val personality: List<String> = emptyList(),
+        val hrFromWatch: HrSummary? = null,
+        val healthSnapshot: String? = null,
+        val healthHistory: HealthHistory? = null,
+        val healthGranted: Int = 0,
+        val healthAvailable: Boolean = false,
+        val hrTriggers: List<String> = emptyList(),
+        val recommendedPeople: List<RecommendedPerson> = emptyList(),
+        val suggestedApps: List<SuggestedApp> = emptyList(),
+        val usageGranted: Boolean = false,
+        val deviceSensors: String? = null,
+        val knownFacts: List<String> = emptyList(),
+        val vaultTotal: Int = 0,
+    )
+
+    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+    private val _ui = MutableStateFlow(Ui())
+    val ui: StateFlow<Ui> = _ui.asStateFlow()
+
+    init {
+        refresh()
+    }
+
+    fun refresh() {
+        viewModelScope.launch {
+            // Show whatever's cached now, instantly.
+            _ui.value = withContext(Dispatchers.IO) { build() }
+            // Then kick a self-profile rebuild (self-gates on freshness
+            // + Gemma availability) and re-render if it produced a new
+            // read.
+            val changed = withContext(Dispatchers.IO) {
+                runCatching { selfPersonaBuilder.rebuild() }.getOrDefault(false)
+            }
+            if (changed) {
+                _ui.value = withContext(Dispatchers.IO) { build() }
+            }
+        }
+    }
+
+    private suspend fun build(): Ui {
+        val semantic = runCatching { vault.listByTier(Tier.Semantic, limit = 500) }
+            .getOrDefault(emptyList())
+        val working = runCatching { vault.listByTier(Tier.Working, limit = 400) }
+            .getOrDefault(emptyList())
+        val total = runCatching {
+            vault.countByTier(Tier.Working) + vault.countByTier(Tier.Episodic) +
+                vault.countByTier(Tier.Semantic) + vault.countByTier(Tier.Procedural)
+        }.getOrDefault(semantic.size + working.size)
+
+        fun List<LearningEntity>.withFacet(facet: String) =
+            filter { facet in vault.decodeFacets(it) }
+
+        // 1) The user's own Big Five.
+        val selfBigFive = semantic.withFacet("kind:self-profile")
+            .firstOrNull()
+            ?.let { parseSelfBigFive(it.content) }
+
+        // 2) Personality — persona statements (messaging style from
+        //    imported WhatsApp/SMS history + app-usage rhythm). Excludes
+        //    contact-scoped rows.
+        val personality = semantic.withFacet("kind:persona")
+            .filter { vault.decodeFacets(it).none { f -> f.startsWith("contact:") } }
+            .take(10)
+            .map { it.content.trim() }
+
+        // 3) Health — watch HR + 24h snapshot + long-range history.
+        val hrRows = working.withFacet("kind:heart-rate")
+        val bpms = hrRows.mapNotNull { extractBpm(it.content) }
+        val hrSummary = if (bpms.isNotEmpty()) {
+            HrSummary(
+                count = bpms.size,
+                latestBpm = bpms.first(),
+                avgBpm = bpms.average().toInt(),
+                minBpm = bpms.min(),
+                maxBpm = bpms.max(),
+                latestMs = hrRows.firstOrNull()?.tsMillis,
+            )
+        } else {
+            null
+        }
+        val healthSnapshot = semantic.withFacet("kind:health-snapshot")
+            .firstOrNull()
+            ?.let { formatHealthSnapshot(it.content) }
+        val healthHistory = semantic.withFacet("kind:health-history")
+            .firstOrNull()
+            ?.let { formatHealthHistory(it.content) }
+        val healthGranted = runCatching { HealthAccess.grantedCount(appContext) }.getOrDefault(0)
+        val healthAvailable = HealthAccess.isAvailable(appContext)
+
+        // 4) Heart-rate triggers.
+        val hrTriggers = semantic.withFacet("topic:hr-correlation")
+            .take(6)
+            .mapNotNull { formatHrCorrelation(it.content, it.tsMillis) }
+
+        // 5) Recommended people — most-genuine connections.
+        val profiles = runCatching { contactRepo.dao.listAll() }.getOrDefault(emptyList())
+        val recommended = scoreRecommended(profiles)
+
+        // 6) Suggested apps — from on-device usage stats.
+        val usageGranted = runCatching { usageAccess.isGranted() }.getOrDefault(false)
+        val suggestedApps = if (usageGranted) suggestApps() else emptyList()
+
+        // 7) Device sensors + known facts.
+        val deviceSensors = semantic.withFacet("kind:sensor-snapshot")
+            .firstOrNull()
+            ?.let { formatSensorSnapshot(it.content) }
+        val knownFacts = semantic.withFacet("src:user-asked")
+            .take(10)
+            .map { it.content.trim() }
+
+        return Ui(
+            loading = false,
+            selfBigFive = selfBigFive,
+            personality = personality,
+            hrFromWatch = hrSummary,
+            healthSnapshot = healthSnapshot,
+            healthHistory = healthHistory,
+            healthGranted = healthGranted,
+            healthAvailable = healthAvailable,
+            hrTriggers = hrTriggers,
+            recommendedPeople = recommended,
+            suggestedApps = suggestedApps,
+            usageGranted = usageGranted,
+            deviceSensors = deviceSensors,
+            knownFacts = knownFacts,
+            vaultTotal = total,
+        )
+    }
+
+    /**
+     * Rank the contacts that read as most genuine: real named people
+     * (promotional / short-code senders are excluded outright),
+     * weighted by interaction volume, favorite status, whether the
+     * user has written notes on them, and recency. Re-runs every
+     * refresh off the daily contact-analysis output, so it shifts as
+     * the relationships shift.
+     */
+    private fun scoreRecommended(profiles: List<ContactProfileRow>): List<RecommendedPerson> {
+        val now = System.currentTimeMillis()
+        return profiles
+            .filter { ContactClassifier.isPersonal(it.displayName, it.phone) }
+            .filter { it.messageCount > 0 }
+            .map { p ->
+                var score = p.messageCount.coerceAtMost(60)
+                val reasons = mutableListOf<String>()
+                if (p.isFavorite) { score += 35; reasons += "favorite" }
+                if (!p.userNotes.isNullOrBlank()) { score += 28; reasons += "you've noted them" }
+                val age = now - p.lastInteractionMs
+                when {
+                    age < 7L * 86_400_000 -> { score += 18; reasons += "in touch this week" }
+                    age < 30L * 86_400_000 -> score += 8
+                }
+                if (!p.relationshipSummary.isNullOrBlank()) score += 8
+                if (p.openness != null) score += 6
+                reasons += "${p.messageCount} interactions"
+                p to RecommendedPerson(p.displayName, reasons.take(3).joinToString(" · "))
+            }
+            .sortedByDescending { computeScore(it.first, now) }
+            .map { it.second }
+            .take(6)
+    }
+
+    private fun computeScore(p: ContactProfileRow, now: Long): Int {
+        var score = p.messageCount.coerceAtMost(60)
+        if (p.isFavorite) score += 35
+        if (!p.userNotes.isNullOrBlank()) score += 28
+        val age = now - p.lastInteractionMs
+        when {
+            age < 7L * 86_400_000 -> score += 18
+            age < 30L * 86_400_000 -> score += 8
+        }
+        if (!p.relationshipSummary.isNullOrBlank()) score += 8
+        if (p.openness != null) score += 6
+        return score
+    }
+
+    private fun suggestApps(): List<SuggestedApp> {
+        val rows = runCatching { usageCollector.collect() }.getOrDefault(emptyList())
+        return rows.take(6).map { u ->
+            SuggestedApp(
+                label = u.label,
+                detail = "${formatMs(u.totalForegroundMs)} today · ${u.launchCount} opens",
+            )
+        }
+    }
+
+    /** "Heart rate 72 bpm (captured on watch)." → 72 */
+    private fun extractBpm(content: String): Int? =
+        Regex("""(\d{2,3})\s*bpm""").find(content)?.groupValues?.get(1)?.toIntOrNull()
+
+    private fun obj(content: String): JsonObject? =
+        runCatching { json.parseToJsonElement(content).jsonObject }.getOrNull()
+
+    private fun JsonObject.num(key: String): Double? =
+        (this[key] as? JsonPrimitive)?.content?.toDoubleOrNull()
+
+    private fun parseSelfBigFive(content: String): SelfBigFive? {
+        val o = obj(content) ?: return null
+        val openness = o.num("openness") ?: return null
+        return SelfBigFive(
+            openness = openness,
+            conscientiousness = o.num("conscientiousness") ?: 0.5,
+            extraversion = o.num("extraversion") ?: 0.5,
+            agreeableness = o.num("agreeableness") ?: 0.5,
+            neuroticism = o.num("neuroticism") ?: 0.5,
+            traits = (o["traits"] as? JsonArray)
+                ?.mapNotNull { (it as? JsonPrimitive)?.content?.trim()?.takeIf { s -> s.isNotEmpty() } }
+                ?: emptyList(),
+            insights = (o["insights"] as? JsonPrimitive)?.content?.trim().orEmpty(),
+            sampleFacts = o.num("sample_facts")?.toInt() ?: 0,
+        )
+    }
+
+    private fun formatHealthSnapshot(content: String): String? {
+        val o = obj(content) ?: return content.take(120)
+        val parts = buildList {
+            o.num("steps_24h")?.let { add("Steps ${humanCount(it.toLong())}") }
+            o.num("hr_24h_avg")?.let { add("Avg HR ${it.toInt()}") }
+            o.num("hr_24h_min")?.let { lo ->
+                o.num("hr_24h_max")?.let { hi -> add("HR ${lo.toInt()}–${hi.toInt()}") }
+            }
+            o.num("sleep_24h_minutes")?.let { add("Sleep ${"%.1f".format(it / 60.0)}h") }
+            o.num("kcal_24h")?.let { add("${it.toInt()} kcal") }
+            o.num("weight_kg")?.let { add("${"%.1f".format(it)} kg") }
+        }
+        return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+    }
+
+    private fun formatHealthHistory(content: String): HealthHistory? {
+        val o = obj(content) ?: return null
+        val days = o.num("window_days")?.toInt() ?: 180
+        val headline = buildList {
+            o.num("steps_per_day_avg")?.let { add("${humanCount(it.toLong())} steps/day") }
+            o.num("sleep_per_night_minutes_avg")?.let { add("${"%.1f".format(it / 60.0)}h sleep/night") }
+            o.num("hr_avg")?.let { add("avg HR ${it.toInt()}") }
+            o.num("kcal_per_day_avg")?.let { add("${it.toInt()} kcal/day") }
+        }.joinToString(" · ")
+        val trend = o.num("hr_trend_delta")?.let { d ->
+            val arrow = when {
+                d > 1 -> "${Glyph.Arrow} climbing"
+                d < -1 -> "${Glyph.Arrow} easing"
+                else -> "steady"
+            }
+            "resting HR $arrow (${"%+.0f".format(d)} bpm over $days days)"
+        }
+        val weight = run {
+            val first = o.num("weight_kg_first")
+            val last = o.num("weight_kg_latest")
+            if (first != null && last != null) {
+                "weight ${"%.1f".format(first)} → ${"%.1f".format(last)} kg"
+            } else {
+                null
+            }
+        }
+        if (headline.isBlank() && trend == null && weight == null) return null
+        return HealthHistory(windowDays = days, headline = headline, trend = trend, weight = weight)
+    }
+
+    private fun formatHrCorrelation(content: String, tsMillis: Long): String? {
+        val o = obj(content) ?: return null
+        val spike = o.num("spike_bpm")?.toInt() ?: return null
+        val baseline = o.num("baseline_bpm")?.toInt()
+        val contact = runCatching {
+            (o["candidates"] as? JsonArray)
+                ?.firstOrNull()?.jsonObject?.get("contact")?.jsonPrimitive?.content
+        }.getOrNull()
+        val who = contact?.takeIf { it.isNotBlank() } ?: "an unknown ping"
+        val delta = if (baseline != null) " (from $baseline)" else ""
+        return "$spike bpm$delta → $who · ${shortDate(tsMillis)}"
+    }
+
+    private fun formatSensorSnapshot(content: String): String? {
+        val o = obj(content) ?: return content.take(120)
+        val parts = buildList {
+            (o["battery"] as? JsonObject)?.let { b ->
+                b.num("percent")?.let { add("Battery ${it.toInt()}%") }
+                b.num("temperature_c")?.let { add("${"%.0f".format(it)}°C") }
+            }
+            (o["environment"] as? JsonObject)?.let { e ->
+                e.num("light_lux")?.let { add("Light ${it.toInt()} lux") }
+                e.num("pressure_hpa")?.let { add("${it.toInt()} hPa") }
+            }
+            (o["connectivity_type"] as? JsonPrimitive)?.content
+                ?.takeIf { it.isNotBlank() && it != "unknown" }
+                ?.let { add(it) }
+        }
+        return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+    }
+
+    private fun humanCount(n: Long): String = when {
+        n >= 1_000 -> "${"%.1f".format(n / 1000.0)}k"
+        else -> n.toString()
+    }
+
+    private fun formatMs(ms: Long): String {
+        val totalMin = ms / 60_000
+        val h = totalMin / 60
+        val m = totalMin % 60
+        return when {
+            h > 0 && m > 0 -> "${h}h ${m}m"
+            h > 0 -> "${h}h"
+            else -> "${m}m"
+        }
+    }
+
+    private fun shortDate(ms: Long): String =
+        SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(ms))
+}
+
+@Composable
+fun AboutMeScreen(
+    onBack: () -> Unit,
+    vm: AboutMeViewModel = hiltViewModel(),
+) {
+    val ui by vm.ui.collectAsState()
+    val healthLauncher = rememberLauncherForActivityResult(
+        PermissionController.createRequestPermissionResultContract(),
+    ) { vm.refresh() }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MytharaColors.Bg)
+            .padding(WindowInsets.systemBars.asPaddingValues())
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) {
+                Text("${Glyph.LeftArrow} back", color = MytharaColors.FgMute)
+            }
+            Spacer(Modifier.width(8.dp))
+            TextButton(onClick = { vm.refresh() }) {
+                Text("${Glyph.Refresh} refresh", color = MytharaColors.FgDim)
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = "ABOUT ME",
+            style = MaterialTheme.typography.headlineSmall.copy(
+                color = MytharaColors.Fg, letterSpacing = 3.sp,
+            ),
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = "${Glyph.AccentBar} everything Lumi has learned about you · ${ui.vaultTotal} learnings",
+            style = MaterialTheme.typography.bodySmall.copy(color = MytharaColors.FgDim),
+        )
+
+        Spacer(Modifier.height(20.dp))
+
+        if (ui.loading) {
+            Panel("loading") {
+                Text("reading the vault…", color = MytharaColors.FgMute, style = MaterialTheme.typography.bodySmall)
+            }
+            return@Column
+        }
+
+        // 1) The user's own Big Five.
+        Panel("your big five") {
+            val b5 = ui.selfBigFive
+            if (b5 == null) {
+                Empty(
+                    "Not built yet. Mythara estimates your Big Five from your imported WhatsApp/SMS history " +
+                        "plus your health metrics — import a chat export from Settings, then refresh.",
+                )
+            } else {
+                Big5Row("openness", b5.openness)
+                Big5Row("conscientiousness", b5.conscientiousness)
+                Big5Row("extraversion", b5.extraversion)
+                Big5Row("agreeableness", b5.agreeableness)
+                Big5Row("neuroticism", b5.neuroticism)
+                if (b5.traits.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = b5.traits.joinToString(" · "),
+                        color = MytharaColors.Bok,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                if (b5.insights.isNotBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(b5.insights, color = MytharaColors.Fg, style = MaterialTheme.typography.bodyMedium)
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "${Glyph.AccentBar} estimated from ${b5.sampleFacts} observed facts",
+                    color = MytharaColors.FgDim,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // 2) Personality analysis.
+        Panel("personality analysis") {
+            if (ui.personality.isEmpty()) {
+                Empty("No persona data yet — import your chat history or grant Usage Access, then refresh.")
+            } else {
+                ui.personality.forEachIndexed { i, line ->
+                    if (i > 0) Spacer(Modifier.height(6.dp))
+                    Bullet(line)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // 3) Recommended people.
+        Panel("recommended people") {
+            if (ui.recommendedPeople.isEmpty()) {
+                Empty("No genuine connections surfaced yet — they appear once Mythara has learned a few real contacts.")
+            } else {
+                Text(
+                    "The people who read as your most genuine connections, re-ranked daily:",
+                    color = MytharaColors.FgDim,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(6.dp))
+                ui.recommendedPeople.forEachIndexed { i, p ->
+                    if (i > 0) Spacer(Modifier.height(6.dp))
+                    Row {
+                        Text(
+                            "${Glyph.DiamondFilled} ",
+                            style = MaterialTheme.typography.bodySmall.copy(color = MytharaColors.Charple),
+                        )
+                        Column {
+                            Text(p.name, color = MytharaColors.Fg, style = MaterialTheme.typography.bodyMedium)
+                            Text(p.reason, color = MytharaColors.FgDim, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // 4) Health analytics.
+        Panel("health analytics") {
+            // Grant affordance — the workers never prompt; this is the
+            // only place the user can wire up Health Connect.
+            if (ui.healthAvailable && ui.healthGranted == 0) {
+                Text(
+                    "Mythara can pull your synced health history (steps, heart rate, sleep, weight) — " +
+                        "it just needs Health Connect read access.",
+                    color = MytharaColors.FgDim,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = { healthLauncher.launch(HealthAccess.PERMISSIONS) },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MytharaColors.Charple,
+                        contentColor = MytharaColors.Fg,
+                    ),
+                ) {
+                    Text("grant health access")
+                }
+                Spacer(Modifier.height(10.dp))
+            } else if (!ui.healthAvailable) {
+                Text(
+                    "Health Connect isn't available on this device.",
+                    color = MytharaColors.FgDim,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+
+            val hr = ui.hrFromWatch
+            if (hr != null) {
+                Stat("Heart rate (watch)", "${hr.latestBpm ?: "–"} bpm")
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "avg ${hr.avgBpm ?: "–"} · range ${hr.minBpm ?: "–"}–${hr.maxBpm ?: "–"} · ${hr.count} samples",
+                    color = MytharaColors.FgDim, style = MaterialTheme.typography.bodySmall,
+                )
+            } else {
+                Empty("No watch heart-rate samples yet — open the watch app to start the 3-minute HR capture.")
+            }
+            ui.healthSnapshot?.let {
+                Spacer(Modifier.height(10.dp))
+                Stat("Last 24h (Health Connect)", "")
+                Spacer(Modifier.height(2.dp))
+                Text(it, color = MytharaColors.Fg, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // 5) Health history (long-range).
+        Panel("health history") {
+            val h = ui.healthHistory
+            if (h == null) {
+                Empty(
+                    if (ui.healthGranted == 0) {
+                        "Grant health access above — Mythara then pulls your last 6 months of synced data."
+                    } else {
+                        "Building — your long-range health history appears here within a day of granting access."
+                    },
+                )
+            } else {
+                Stat("Last ${h.windowDays} days", "")
+                if (h.headline.isNotBlank()) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(h.headline, color = MytharaColors.Fg, style = MaterialTheme.typography.bodyMedium)
+                }
+                h.trend?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Bullet(it)
+                }
+                h.weight?.let {
+                    Spacer(Modifier.height(4.dp))
+                    Bullet(it)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // 6) Suggested apps.
+        Panel("suggested apps") {
+            if (!ui.usageGranted) {
+                Empty("Grant Usage Access (Settings → Special access) so Mythara can suggest apps from your usage.")
+            } else if (ui.suggestedApps.isEmpty()) {
+                Empty("No usage data yet — check back after you've used the phone for a bit.")
+            } else {
+                Text(
+                    "Your most-used apps — quick picks from today's usage:",
+                    color = MytharaColors.FgDim,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(6.dp))
+                ui.suggestedApps.forEachIndexed { i, app ->
+                    if (i > 0) Spacer(Modifier.height(6.dp))
+                    Row {
+                        Text(
+                            "${Glyph.DiamondFilled} ",
+                            style = MaterialTheme.typography.bodySmall.copy(color = MytharaColors.Mustard),
+                        )
+                        Column {
+                            Text(app.label, color = MytharaColors.Fg, style = MaterialTheme.typography.bodyMedium)
+                            Text(app.detail, color = MytharaColors.FgDim, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // 7) Heart-rate triggers.
+        Panel("heart-rate triggers") {
+            if (ui.hrTriggers.isEmpty()) {
+                Empty("No heart-rate spikes correlated yet — Mythara links HR jumps to who pinged you in the moments before.")
+            } else {
+                ui.hrTriggers.forEachIndexed { i, line ->
+                    if (i > 0) Spacer(Modifier.height(6.dp))
+                    Bullet(line)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // 8) Device & sensors.
+        Panel("device & sensors") {
+            ui.deviceSensors?.let {
+                Text(it, color = MytharaColors.Fg, style = MaterialTheme.typography.bodyMedium)
+            } ?: Empty("No sensor snapshot captured yet.")
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // 9) What Lumi remembers.
+        Panel("what Lumi remembers") {
+            if (ui.knownFacts.isEmpty()) {
+                Empty("Nothing yet — say \"remember that…\" and Lumi will keep it here.")
+            } else {
+                ui.knownFacts.forEachIndexed { i, line ->
+                    if (i > 0) Spacer(Modifier.height(6.dp))
+                    Bullet(line)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(40.dp))
+    }
+}
+
+@Composable
+private fun Panel(title: String, body: @Composable () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(MytharaColors.Surface)
+            .border(1.dp, MytharaColors.SurfaceHigh, RoundedCornerShape(10.dp))
+            .padding(14.dp),
+    ) {
+        Text(
+            text = "${Glyph.DiamondOutline} $title",
+            style = MaterialTheme.typography.labelLarge.copy(color = MytharaColors.FgMute),
+        )
+        Spacer(Modifier.height(8.dp))
+        body()
+    }
+}
+
+@Composable
+private fun Bullet(text: String) {
+    Row {
+        Text(
+            "${Glyph.AccentBar} ",
+            style = MaterialTheme.typography.bodySmall.copy(color = MytharaColors.Charple),
+        )
+        Text(
+            text,
+            style = MaterialTheme.typography.bodySmall.copy(color = MytharaColors.Fg),
+        )
+    }
+}
+
+@Composable
+private fun Stat(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodySmall.copy(color = MytharaColors.FgMute))
+        if (value.isNotBlank()) {
+            Text(
+                value,
+                style = MaterialTheme.typography.titleMedium.copy(color = MytharaColors.Bok),
+            )
+        }
+    }
+}
+
+@Composable
+private fun Big5Row(label: String, value: Double) {
+    val pct = (value.coerceIn(0.0, 1.0) * 100).toInt()
+    val barColor = when {
+        label == "neuroticism" && value > 0.65 -> MytharaColors.Sriracha
+        value > 0.65 -> MytharaColors.Bok
+        value < 0.35 -> MytharaColors.FgMute
+        else -> MytharaColors.Charple
+    }
+    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(label, color = MytharaColors.Fg, style = MaterialTheme.typography.bodySmall)
+            Text("$pct", color = MytharaColors.FgMute, style = MaterialTheme.typography.bodySmall)
+        }
+        Spacer(Modifier.height(4.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(MytharaColors.Bg),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(value.toFloat().coerceIn(0f, 1f))
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(barColor),
+            )
+        }
+    }
+}
+
+@Composable
+private fun Empty(text: String) {
+    Text(text, color = MytharaColors.FgDim, style = MaterialTheme.typography.bodySmall)
+}
