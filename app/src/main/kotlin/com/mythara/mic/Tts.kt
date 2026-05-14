@@ -81,6 +81,30 @@ class Tts @Inject constructor(
     fun speak(text: String, locale: Locale?) = speak(text, locale, userMoodTrend = null)
 
     /**
+     * Force the ElevenLabs route regardless of the user's global
+     * `useElevenLabs` toggle. Used by callers that want the premium
+     * voice unconditionally — reminder announcements, for instance,
+     * are infrequent + high-priority and benefit from the warmer
+     * voice even when the user has the global toggle off (token
+     * cost stays bounded since reminder count is bounded).
+     *
+     * Silent fallback to Android TTS when no ElevenLabs key is
+     * configured — never throws.
+     */
+    fun speakForcedElevenLabs(text: String, locale: Locale? = null, userMoodTrend: String? = null) {
+        if (text.isBlank()) return
+        scope.launch {
+            val snap = runCatching { settings.snapshot() }.getOrNull()
+            if (snap?.elevenLabsKey.isNullOrBlank()) {
+                // No EL key configured — fall through to Android TTS.
+                speakViaAndroid(text, locale, userMoodTrend)
+            } else {
+                speakViaElevenLabs(text, snap!!.elevenLabsKey!!, snap.elevenLabsVoiceId, userMoodTrend)
+            }
+        }
+    }
+
+    /**
      * Speak the text with the given [locale]. Falls back to the system
      * default if the locale isn't available on the device's TTS engine
      * (the engine returns LANG_MISSING_DATA / LANG_NOT_SUPPORTED, in

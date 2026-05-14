@@ -32,6 +32,7 @@ lifecycleProcess = "2.8.7"
 vosk = "0.3.47"
 jna = "5.13.0"
 mediapipeText = "0.10.14"
+healthConnect = "1.1.0-alpha07"
 # CameraX 1.4.x is the latest stable series that lines up with our
 # AGP 8.10 / Kotlin 2.2 toolchain. 1.5.x is still rc as of May 2026 —
 # we only need ImageCapture (one-shot stills), no 1.5-specific features.
@@ -111,6 +112,7 @@ hilt-work-compiler = { group = "androidx.hilt", name = "hilt-compiler", version.
 # MediaPipe Tasks-Text — on-device Universal Sentence Encoder embeddings.
 # 100-dim float vectors, 6MB model (lazy-downloaded, not bundled).
 mediapipe-tasks-text = { group = "com.google.mediapipe", name = "tasks-text", version.ref = "mediapipeText" }
+androidx-health-connect-client = { group = "androidx.health.connect", name = "connect-client", version.ref = "healthConnect" }
 
 # LiteRT-LM — on-device LLM inference replacing MediaPipe Tasks-GenAI.
 # Used by GemmaExtractor (M8.2.2) for structured fact extraction from

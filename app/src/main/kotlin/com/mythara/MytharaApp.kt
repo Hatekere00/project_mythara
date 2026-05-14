@@ -9,6 +9,8 @@ import com.mythara.agent.queue.PendingReplyKickScheduler
 import com.mythara.agent.queue.PendingReplyQueue
 import com.mythara.lifeline.LifelineScheduler
 import com.mythara.lifeline.MediaStoreObserver
+import com.mythara.health.HealthLearningScheduler
+import com.mythara.health.HrCorrelationScheduler
 import com.mythara.mcp.McpRegistry
 import com.mythara.memory.HeartbeatSyncer
 import com.mythara.reminders.ReminderAlarmScheduler
@@ -60,6 +62,8 @@ class MytharaApp : Application(), Configuration.Provider {
     @Inject lateinit var mcpRegistry: McpRegistry
     @Inject lateinit var sensorLearningScheduler: SensorLearningScheduler
     @Inject lateinit var reminderAlarmScheduler: ReminderAlarmScheduler
+    @Inject lateinit var healthLearningScheduler: HealthLearningScheduler
+    @Inject lateinit var hrCorrelationScheduler: HrCorrelationScheduler
 
     // App-scoped supervisor for fire-and-forget process-level
     // coroutines (settings-flow observers etc.). Cancelled implicitly
@@ -130,6 +134,20 @@ class MytharaApp : Application(), Configuration.Provider {
         // BootReceiver also calls rescheduleAll() on device boot
         // because AlarmManager doesn't survive reboots.
         reminderAlarmScheduler.start()
+        // Health Connect snapshot worker — pulls last-24h aggregates
+        // every 6h on charging, lands semantic vault rows tagged
+        // topic:health. Silently no-ops when no permissions granted
+        // or Health Connect SDK unavailable. The vault's existing
+        // semantic sync ships these to peers via the memory repo.
+        healthLearningScheduler.start()
+        // HR correlation worker — every hour, looks for heart-rate
+        // spikes (typically from a paired Pixel Watch) and attributes
+        // each to whichever contact pinged the user in the preceding
+        // 5-min window. Per-contact correlation rows feed the
+        // contact-analytics builder so "Boss pings consistently
+        // correlate with HR spikes" becomes a learned relationship
+        // signal that flavors auto-replies + persona insights.
+        hrCorrelationScheduler.start()
         // Reflect the user's persistent-talk-notification preference
         // on every cold start (and follow live toggles while the
         // process is alive). Observing the Flow rather than reading

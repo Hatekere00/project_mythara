@@ -148,6 +148,13 @@ dependencies {
     // Universal Sentence Encoder Lite. Lazy-downloaded ~6MB tflite model.
     implementation(libs.mediapipe.tasks.text)
 
+    // Health Connect — Android's modern unified health data API.
+    // Replaces the deprecated Google Fit. Read-only: steps, heart rate,
+    // sleep, distance, weight, etc. Feeds the periodic
+    // HealthLearningWorker so the assistant grows a long-term view of
+    // the user's activity / sleep / heart patterns over time.
+    implementation(libs.androidx.health.connect.client)
+
     // LiteRT-LM — on-device Gemma 4 E2B for M8.2.2 fact extraction. Replaces
     // MediaPipe Tasks-GenAI as Google's supported runtime path. Speaks the
     // `.litertlm` bundle format, auto-dispatches to GPU/NPU on supported

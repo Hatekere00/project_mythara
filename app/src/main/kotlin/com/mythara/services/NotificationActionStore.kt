@@ -55,6 +55,15 @@ class NotificationActionStore @Inject constructor(
         /** We auto-dismissed on user's behalf. */
         val a: Int = 0,
         val lastTs: Long = 0L,
+        /**
+         * Recent dismiss dwell times in milliseconds (notification
+         * shown → user swiped away). Bounded at 20 samples — newer
+         * samples push older ones out so the median reflects current
+         * user behaviour, not stale history. Short dwells (<3s) on
+         * many samples = pattern of "user instantly dismisses these"
+         * = high-confidence auto-dismiss candidate.
+         */
+        val dwellsMs: List<Long> = emptyList(),
     )
 
     @Serializable
@@ -91,6 +100,23 @@ class NotificationActionStore @Inject constructor(
         update(pkg) { c -> c.copy(d = c.d + 1, lastTs = System.currentTimeMillis()) }
     }
 
+    /**
+     * Same as [bumpUserDismissed] + records the dwell time (how long
+     * the notification was visible before the user swiped). Bounded
+     * sliding window — keeps the last [DWELL_WINDOW_SIZE] samples
+     * so the median reflects current behaviour, not stale history.
+     */
+    suspend fun bumpUserDismissedWithDwell(pkg: String, dwellMs: Long) {
+        update(pkg) { c ->
+            val updated = (c.dwellsMs + dwellMs.coerceAtLeast(0L)).takeLast(DWELL_WINDOW_SIZE)
+            c.copy(
+                d = c.d + 1,
+                lastTs = System.currentTimeMillis(),
+                dwellsMs = updated,
+            )
+        }
+    }
+
     suspend fun bumpUserOpened(pkg: String) {
         update(pkg) { c -> c.copy(c = c.c + 1, lastTs = System.currentTimeMillis()) }
     }
@@ -113,10 +139,22 @@ class NotificationActionStore @Inject constructor(
      */
     suspend fun shouldAutoDismiss(pkg: String): Boolean {
         val c = counts(pkg)
-        if (c.d < DISMISS_THRESHOLD) return false
-        val total = (c.d + c.c).coerceAtLeast(1)
-        val dismissRate = c.d.toFloat() / total
-        return dismissRate >= DISMISS_RATIO
+        // Rule A — explicit pattern: many manual dismisses, high
+        // dismiss:click ratio.
+        if (c.d >= DISMISS_THRESHOLD) {
+            val total = (c.d + c.c).coerceAtLeast(1)
+            if (c.d.toFloat() / total >= DISMISS_RATIO) return true
+        }
+        // Rule B — learned latency pattern: ≥ DWELL_CONFIDENCE_MIN
+        // samples AND median dwell time < DWELL_LOW_VALUE_MS. Means
+        // the user has consistently swiped these away within a few
+        // seconds → low subjective value → safe to auto-dismiss.
+        if (c.dwellsMs.size >= DWELL_CONFIDENCE_MIN) {
+            val sorted = c.dwellsMs.sorted()
+            val median = sorted[sorted.size / 2]
+            if (median < DWELL_LOW_VALUE_MS) return true
+        }
+        return false
     }
 
     suspend fun recentDismissals(limit: Int = MAX_LOG): List<DismissedEntry> {
@@ -157,5 +195,14 @@ class NotificationActionStore @Inject constructor(
 
         /** Cap on the recent-dismissals log. */
         const val MAX_LOG = 100
+
+        /** Sliding window size for dwell-time samples per package. */
+        const val DWELL_WINDOW_SIZE = 20
+
+        /** Minimum dwell samples before the learned-latency rule fires. */
+        const val DWELL_CONFIDENCE_MIN = 6
+
+        /** Median dwell below this milliseconds = "user instantly dismisses these". */
+        const val DWELL_LOW_VALUE_MS = 3_000L
     }
 }

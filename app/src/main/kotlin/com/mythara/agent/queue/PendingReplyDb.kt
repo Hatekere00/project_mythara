@@ -196,6 +196,33 @@ interface PendingReplyDao {
         inFlight: String = PendingReplyStatus.IN_FLIGHT.name,
     ): Int
 
+    /** Live PENDING + IN_FLIGHT + FAILED-with-retries-left rows so the
+     *  user can see what's queued and manually nuke stale entries. */
+    @Query(
+        """
+        SELECT * FROM pending_replies
+        WHERE status IN (:pending, :inFlight)
+        ORDER BY ts_millis DESC
+        LIMIT :limit
+        """,
+    )
+    fun observeActive(
+        limit: Int = 100,
+        pending: String = PendingReplyStatus.PENDING.name,
+        inFlight: String = PendingReplyStatus.IN_FLIGHT.name,
+    ): kotlinx.coroutines.flow.Flow<List<PendingReplyEntity>>
+
+    /** User manually cancels a queued notification reply. */
+    @Query(
+        """
+        UPDATE pending_replies
+        SET status = :skipped, in_flight_since_ms = NULL,
+            last_error = COALESCE(last_error, '') || ' [user-dismissed]'
+        WHERE id = :id
+        """,
+    )
+    suspend fun userDismiss(id: Long, skipped: String = PendingReplyStatus.SKIPPED.name)
+
     /** GC rows older than the retention window so the table doesn't grow forever. */
     @Query("DELETE FROM pending_replies WHERE status IN (:handled, :failed, :skipped) AND ts_millis < :cutoffMs")
     suspend fun gcOldTerminal(

@@ -139,10 +139,20 @@ class NotificationListener : NotificationListenerService() {
         // Only count user-driven actions; app-side cancels, system
         // overlay updates, etc. don't tell us anything about user
         // preference for that pkg.
+        // Dwell time: how long was the notification visible before
+        // the user reacted? Pulled from the in-memory `recent` buffer
+        // (post times we captured in captureLocked). Short dwells on
+        // dismiss are the strongest "this is noise" signal we have.
+        val dwellMs: Long = recent.firstOrNull { it.key == sbn.key }
+            ?.let { (System.currentTimeMillis() - it.postTimeMs).coerceAtLeast(0L) }
+            ?: -1L
         ioScope.launch {
             runCatching {
                 when (reason) {
-                    REASON_CANCEL -> actionStore.bumpUserDismissed(pkg)
+                    REASON_CANCEL -> {
+                        if (dwellMs >= 0) actionStore.bumpUserDismissedWithDwell(pkg, dwellMs)
+                        else actionStore.bumpUserDismissed(pkg)
+                    }
                     REASON_CLICK -> actionStore.bumpUserOpened(pkg)
                     // REASON_LISTENER_CANCEL is OUR cancel (we
                     // initiated it from auto-dismiss path); already
@@ -209,9 +219,23 @@ class NotificationListener : NotificationListenerService() {
             // event when bursts overrun the 16-slot buffer.
             _newNotifications.tryEmit(r)
         }
-        // Auto-dismiss promo / credit / OTP / engagement spam AFTER we've
-        // captured it for the agent's pipelines. The shade stays clean
-        // but the metadata still flowed into the audit log + queue.
+        // Auto-dismiss noise AFTER we've captured the metadata for
+        // downstream pipelines. Two paths:
+        //
+        //   1. Static PromoNotificationClassifier (package allowlist
+        //      / category match / phrase patterns).
+        //
+        //   2. Learned per-pkg pattern from NotificationActionStore —
+        //      a sliding window of dismiss latencies. When the user
+        //      has consistently swiped a pkg's notifications away
+        //      within a few seconds AND we have enough samples to
+        //      be confident, we auto-dismiss the next one even if
+        //      no static rule fires. The "learning slowly" + "auto-
+        //      dismiss when confident" semantic.
+        //
+        //   The store check is async (DataStore); we hop to ioScope
+        //   and cancel from there. Captures the event for the audit
+        //   log regardless of which path fired.
         if (PromoNotificationClassifier.shouldAutoDismiss(
                 packageName = r.packageName,
                 category = sbn.notification?.category,
@@ -224,7 +248,18 @@ class NotificationListener : NotificationListenerService() {
             ioScope.launch {
                 runCatching { actionStore.bumpAutoDismissed(r.packageName, title, text) }
             }
-            Log.d(TAG, "auto-dismissed promo notif from ${r.packageName}")
+            Log.d(TAG, "auto-dismissed promo notif from ${r.packageName} (static rule)")
+        } else {
+            ioScope.launch {
+                val learned = runCatching { actionStore.shouldAutoDismiss(r.packageName) }
+                    .getOrDefault(false)
+                if (learned) {
+                    runCatching { cancelNotification(sbn.key) }
+                        .onFailure { Log.w(TAG, "learned dismiss failed: ${it.message}") }
+                    runCatching { actionStore.bumpAutoDismissed(r.packageName, title, text) }
+                    Log.d(TAG, "auto-dismissed notif from ${r.packageName} (learned pattern)")
+                }
+            }
         }
     }
 

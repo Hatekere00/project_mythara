@@ -39,6 +39,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.mythara.agent.queue.PendingReplyEntity
+import com.mythara.agent.queue.PendingReplyRepository
 import com.mythara.memory.DeviceIdStore
 import com.mythara.memory.HeartbeatSyncer
 import com.mythara.tasks.TaskEntity
@@ -60,12 +62,23 @@ import javax.inject.Inject
 @HiltViewModel
 class TasksScreenViewModel @Inject constructor(
     private val repo: TaskRepository,
+    private val pendingReplies: PendingReplyRepository,
     private val deviceIdStore: DeviceIdStore,
     private val heartbeat: HeartbeatSyncer,
 ) : ViewModel() {
 
     val tasks: StateFlow<List<TaskEntity>> = repo.dao.observeRecent(limit = 200)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), emptyList())
+
+    /** Notifications queued for auto-reply that haven't fired yet —
+     *  user can manually dismiss stale ones (e.g. an old WhatsApp ping
+     *  that no longer needs a reply). */
+    val pendingNotifs: StateFlow<List<PendingReplyEntity>> = pendingReplies.dao.observeActive(limit = 100)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), emptyList())
+
+    fun dismissPendingNotif(id: Long) {
+        viewModelScope.launch { pendingReplies.dao.userDismiss(id) }
+    }
 
     @Volatile var myDeviceId: String? = null
         private set
@@ -135,6 +148,7 @@ fun TasksScreenPane(onClose: () -> Unit) {
 @Composable
 private fun TasksScreenBody(vm: TasksScreenViewModel = hiltViewModel()) {
     val tasks by vm.tasks.collectAsState()
+    val pendingNotifs by vm.pendingNotifs.collectAsState()
     val (pending, terminal) = tasks.partition { it.status in PENDING_LIKE }
     var composing by remember { mutableStateOf(false) }
 
@@ -181,7 +195,7 @@ private fun TasksScreenBody(vm: TasksScreenViewModel = hiltViewModel()) {
             }
             Spacer(Modifier.height(12.dp))
 
-            if (tasks.isEmpty()) {
+            if (tasks.isEmpty() && pendingNotifs.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
@@ -197,6 +211,18 @@ private fun TasksScreenBody(vm: TasksScreenViewModel = hiltViewModel()) {
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    // Notification reply queue — surfaces what the
+                    // auto-reply pipeline is about to fire on. User
+                    // can tap × to skip stale ones (old WhatsApp
+                    // ping that doesn't need a reply anymore).
+                    if (pendingNotifs.isNotEmpty()) {
+                        item(key = "h:notif-queue") {
+                            SectionHeader("${Glyph.Dot} notification reply queue", count = pendingNotifs.size)
+                        }
+                        items(pendingNotifs, key = { "n:${it.id}" }) { n ->
+                            PendingNotifRow(notif = n, onDismiss = { vm.dismissPendingNotif(n.id) })
+                        }
+                    }
                     if (pending.isNotEmpty()) {
                         item(key = "h:pending") {
                             SectionHeader("${Glyph.Ellipsis} pending", count = pending.size)
@@ -226,6 +252,78 @@ private fun TasksScreenBody(vm: TasksScreenViewModel = hiltViewModel()) {
                 vm.createTask(title, body, target)
                 composing = false
             },
+        )
+    }
+}
+
+@Composable
+private fun PendingNotifRow(notif: PendingReplyEntity, onDismiss: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(MytharaColors.Surface)
+            .border(1.dp, MytharaColors.Mustard, RoundedCornerShape(10.dp))
+            .padding(12.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "${Glyph.DiamondOutline} ${notif.senderTitle}",
+                color = MytharaColors.Fg,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = notif.route.lowercase(),
+                color = MytharaColors.Mustard,
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
+        if (notif.body.isNotBlank()) {
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = notif.body,
+                color = MytharaColors.FgMute,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 3,
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = formatDate(notif.tsMillis),
+                color = MytharaColors.FgDim,
+                style = MaterialTheme.typography.labelSmall,
+            )
+            Spacer(Modifier.padding(end = 6.dp))
+            Text("│", color = MytharaColors.SurfaceHigh, style = MaterialTheme.typography.labelSmall)
+            Spacer(Modifier.padding(end = 6.dp))
+            Text(
+                text = "${notif.pkg} · ${notif.status.lowercase()}",
+                color = MytharaColors.FgDim,
+                style = MaterialTheme.typography.labelSmall,
+            )
+            if (notif.attempts > 0) {
+                Spacer(Modifier.padding(end = 6.dp))
+                Text("│", color = MytharaColors.SurfaceHigh, style = MaterialTheme.typography.labelSmall)
+                Spacer(Modifier.padding(end = 6.dp))
+                Text(
+                    text = "attempt ${notif.attempts}",
+                    color = MytharaColors.FgDim,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "${Glyph.Cross} skip (don't auto-reply)",
+            color = MytharaColors.Sriracha,
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.clickable { onDismiss() },
         )
     }
 }
