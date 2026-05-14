@@ -100,6 +100,12 @@ fun ChatScreen(
 ) {
     val ui by vm.ui.collectAsState()
     val insets = WindowInsets.systemBars.asPaddingValues()
+    // ASSIST-intent dictation → composer draft. When the user hits
+    // PTT on Pixel Buds / watch / assist gesture, the resulting
+    // transcript lands here (not in the agent's submit queue) so
+    // they can review + edit + tap send. Cleared by the Composer
+    // after consumption.
+    var dictation by remember { mutableStateOf<String?>(null) }
 
     // Continuous-mode driver. Two behavioural notes the original v1
     // didn't get right:
@@ -245,11 +251,18 @@ fun ChatScreen(
                     is SpeechRecognition.Event.Final -> {
                         val text = terminal.text.trim()
                         if (text.isNotEmpty()) {
-                            vm.submitVoice(
-                                text = text,
-                                pcm = captured?.pcm,
-                                pcmSampleRate = captured?.sampleRate ?: 0,
-                            )
+                            // Drop the transcript into the composer
+                            // draft instead of auto-submitting — the
+                            // user gets a chance to review + edit
+                            // before sending, which matters most for
+                            // dictation off Pixel Buds / the watch
+                            // where speech-recognition errors are
+                            // common and there's no good way to
+                            // recover from a wrong auto-submit.
+                            dictation = text
+                            // captured PCM is discarded on dictation
+                            // path — mood-tracking happens on submit
+                            // in the Composer's onSubmit, not here.
                         }
                     }
                     is SpeechRecognition.Event.Error ->
@@ -345,6 +358,8 @@ fun ChatScreen(
             // voice-friendly short reply when the user spoke.
             onSubmit = { text, fromVoice -> vm.submit(text, fromVoice) },
             enabled = !ui.thinking,
+            incomingDictation = dictation,
+            onDictationConsumed = { dictation = null },
         )
     }
 
@@ -590,8 +605,31 @@ private fun TextBubble(role: String, text: String, isUser: Boolean) {
 }
 
 @Composable
-private fun Composer(onSubmit: (String, Boolean) -> Unit, enabled: Boolean) {
+private fun Composer(
+    onSubmit: (String, Boolean) -> Unit,
+    enabled: Boolean,
+    /**
+     * When non-null, this text is dropped into the composer's draft
+     * field for the user to review + edit before tapping send. Used by
+     * the ASSIST-intent voice path (Pixel Buds tap, watch long-press)
+     * — the user wanted dictation-to-composer rather than auto-submit
+     * so they get a chance to fix the transcription before it lands
+     * with the agent.
+     */
+    incomingDictation: String? = null,
+    onDictationConsumed: () -> Unit = {},
+) {
     var draft by remember { mutableStateOf("") }
+    // Apply incoming dictation exactly once per (string, identity).
+    // Append to whatever the user has already typed so a half-typed
+    // thought + a dictated tail merge naturally.
+    LaunchedEffect(incomingDictation) {
+        val text = incomingDictation
+        if (!text.isNullOrBlank()) {
+            draft = if (draft.isBlank()) text else "${draft.trim()} ${text.trim()}"
+            onDictationConsumed()
+        }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
