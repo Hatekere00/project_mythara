@@ -545,6 +545,7 @@ private fun Transcript(
                 is ChatViewModel.ChatItem.Tool -> ToolCallBubble(item)
                 is ChatViewModel.ChatItem.FromOtherDevice -> FromOtherDeviceCard(item)
                 is ChatViewModel.ChatItem.LifelinePhoto -> LifelineCard(item)
+                is ChatViewModel.ChatItem.ReminderCard -> ReminderCard(item)
             }
         }
         if (streamingActive) {

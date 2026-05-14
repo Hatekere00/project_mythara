@@ -11,6 +11,7 @@ import com.mythara.lifeline.LifelineScheduler
 import com.mythara.lifeline.MediaStoreObserver
 import com.mythara.mcp.McpRegistry
 import com.mythara.memory.HeartbeatSyncer
+import com.mythara.reminders.ReminderAlarmScheduler
 import com.mythara.sensors.SensorLearningScheduler
 import com.mythara.analytics.ContactAnalyticsScheduler
 import com.mythara.agent.SelfOrganizerScheduler
@@ -58,6 +59,7 @@ class MytharaApp : Application(), Configuration.Provider {
     @Inject lateinit var heartbeatSyncer: HeartbeatSyncer
     @Inject lateinit var mcpRegistry: McpRegistry
     @Inject lateinit var sensorLearningScheduler: SensorLearningScheduler
+    @Inject lateinit var reminderAlarmScheduler: ReminderAlarmScheduler
 
     // App-scoped supervisor for fire-and-forget process-level
     // coroutines (settings-flow observers etc.). Cancelled implicitly
@@ -123,6 +125,11 @@ class MytharaApp : Application(), Configuration.Provider {
         // usually 800 lux"), shipped via the existing semantic
         // sync to peer devices.
         sensorLearningScheduler.start()
+        // Reminder alarms — observes TaskDb and registers
+        // AlarmManager exact-wake intents for every scheduled task.
+        // BootReceiver also calls rescheduleAll() on device boot
+        // because AlarmManager doesn't survive reboots.
+        reminderAlarmScheduler.start()
         // Reflect the user's persistent-talk-notification preference
         // on every cold start (and follow live toggles while the
         // process is alive). Observing the Flow rather than reading

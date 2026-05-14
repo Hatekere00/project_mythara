@@ -47,6 +47,7 @@ class ChatViewModel @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext private val appCtx: android.content.Context,
     private val deviceIdStore: com.mythara.memory.DeviceIdStore,
     private val lifelineRepo: com.mythara.lifeline.LifelineRepository,
+    private val taskRepo: com.mythara.tasks.TaskRepository,
 ) : ViewModel() {
     /** Local device id, cached once on init. Used to identify
      *  foreign-device chat rows for the FromOtherDevice card render. */
@@ -71,6 +72,7 @@ class ChatViewModel @Inject constructor(
             rebuildItems(
                 rows = history.dao.listAll(),
                 lifeline = runCatching { lifelineRepo.dao.listRecent(limit = 500) }.getOrDefault(emptyList()),
+                tasks = runCatching { taskRepo.dao.listRecent(limit = 200) }.getOrDefault(emptyList()),
             )
         }
         // "Hey Lumi <query>" → submit the query just like a typed
@@ -281,6 +283,27 @@ class ChatViewModel @Inject constructor(
             val durationMs: Long? = null,
         ) : ChatItem
         /**
+         * Scheduled reminder. Interleaved by [scheduledForMs] so the
+         * card sits in the timeline where it'll fire. Three live
+         * states drive visual treatment: future (Malibu), live/now
+         * (Citron), terminal (muted SurfaceHigh).
+         *
+         * Actions on the card (Done, +15m, +1h, +3h) broadcast the
+         * same REMINDER_ACTION intent as the notification's actions —
+         * single state-machine entry point in ReminderAlarmReceiver.
+         */
+        data class ReminderCard(
+            override val key: String,
+            val id: String,
+            val title: String,
+            val body: String,
+            val scheduledForMs: Long,
+            val status: String,
+            val terminal: Boolean,
+            val resultText: String? = null,
+        ) : ChatItem
+
+        /**
          * A camera photo from the user's life timeline, interleaved into
          * the chat scrollback by timestamp. The image bytes live in the
          * device's MediaStore (referenced by [uri] when [isLocal]).
@@ -339,17 +362,21 @@ class ChatViewModel @Inject constructor(
     private val inflightTools = mutableMapOf<String, ChatItem.Tool>()
 
     init {
-        // Observe BOTH chat history AND the lifeline (photo timeline)
-        // tables, recomposing items whenever either changes. The two
-        // are merged + sorted by timestamp in rebuildItems so photos
-        // interleave naturally with chat turns — "home of the launcher
-        // = life's timeline" relies on this.
+        // Observe chat history + lifeline (photos) + tasks (for
+        // ReminderCards). All three streams merge + sort by timestamp
+        // in rebuildItems so photos AND scheduled reminders interleave
+        // naturally with chat turns — "home of the launcher = life's
+        // timeline" relies on this.
         viewModelScope.launch {
             kotlinx.coroutines.flow.combine(
                 history.dao.observeAll(),
                 lifelineRepo.dao.observeRecent(),
-            ) { rows, lifeline -> rows to lifeline }
-                .collect { (rows, lifeline) -> rebuildItems(rows, lifeline) }
+                taskRepo.dao.observeRecent(),
+            ) { rows, lifeline, tasks ->
+                Triple(rows, lifeline, tasks)
+            }.collect { (rows, lifeline, tasks) ->
+                rebuildItems(rows, lifeline, tasks)
+            }
         }
     }
 
@@ -476,6 +503,7 @@ class ChatViewModel @Inject constructor(
     private fun rebuildItems(
         rows: List<MessageRow>,
         lifeline: List<com.mythara.lifeline.LifelineEntity> = emptyList(),
+        tasks: List<com.mythara.tasks.TaskEntity> = emptyList(),
     ) {
         // Build chat items into a tagged list (ts → item) so we can
         // interleave lifeline photo cards by timestamp at the end.
@@ -609,6 +637,31 @@ class ChatViewModel @Inject constructor(
                     height = photo.height,
                     deviceShortId = photo.deviceId.takeLast(8),
                     placeLabel = photo.placeLabel,
+                ),
+            )
+        }
+        // Scheduled-task reminders interleaved by their scheduled
+        // wall-clock time. Only those with a scheduled_for_ms surface
+        // as cards; tasks without a schedule live entirely in the
+        // tasks panel.
+        val terminalStatuses = setOf(
+            com.mythara.tasks.TaskStatus.DONE.name,
+            com.mythara.tasks.TaskStatus.FAILED.name,
+            com.mythara.tasks.TaskStatus.CANCELED.name,
+        )
+        for (task in tasks) {
+            val sched = task.scheduledForMs ?: continue
+            val terminal = task.status in terminalStatuses
+            tagged.add(
+                sched to ChatItem.ReminderCard(
+                    key = "rem:${task.id}",
+                    id = task.id,
+                    title = task.title,
+                    body = task.body,
+                    scheduledForMs = sched,
+                    status = task.status,
+                    terminal = terminal,
+                    resultText = task.resultText,
                 ),
             )
         }

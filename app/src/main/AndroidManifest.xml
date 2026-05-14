@@ -36,6 +36,19 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
 
+    <!-- Exact-alarm permissions for scheduled reminders. Android 12+
+         requires SCHEDULE_EXACT_ALARM (revocable by the user via
+         Settings); Android 13+ added USE_EXACT_ALARM as a static
+         permission that grants the capability without the user being
+         able to revoke it — appropriate for an assistant whose entire
+         premise is "Lumi will remind me at X time". Both declared so
+         the system picks the most-trusted granted variant at runtime.
+         Without these, AlarmManager.setExactAndAllowWhileIdle silently
+         downgrades to inexact and reminders fire minutes-to-hours
+         late. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
     <!-- Read media images — lets the read_recent_chat_image tool query
          MediaStore for the most-recent image WhatsApp / Telegram / etc.
          auto-saved to the gallery. Useful when notifications surface
@@ -299,6 +312,20 @@
             android:exported="false">
             <intent-filter>
                 <action android:name="com.mythara.action.NOTIFICATION_REPLY" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Reminder alarm receiver. AlarmManager fires this when a
+             scheduled task's time arrives; handler announces via TTS,
+             posts a notification, and updates the chat scrollback
+             with an actionable reminder card (Done / Snooze 15m /
+             Snooze 1h). -->
+        <receiver
+            android:name=".reminders.ReminderAlarmReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.mythara.action.REMINDER_FIRE" />
+                <action android:name="com.mythara.action.REMINDER_ACTION" />
             </intent-filter>
         </receiver>
 

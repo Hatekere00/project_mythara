@@ -48,6 +48,7 @@ class BootReceiver : BroadcastReceiver() {
     @Inject @ApplicationContext lateinit var appCtx: Context
     @Inject lateinit var quickTalkNotification: QuickTalkNotification
     @Inject lateinit var quickTalkSettings: QuickTalkSettings
+    @Inject lateinit var reminderAlarmScheduler: com.mythara.reminders.ReminderAlarmScheduler
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -68,6 +69,12 @@ class BootReceiver : BroadcastReceiver() {
                     quickTalkNotification.show()
                     Log.d(TAG, "QuickTalk notification re-posted after $action")
                 }
+                // Re-arm every scheduled reminder. AlarmManager does
+                // NOT survive a device reboot — without this, any
+                // task with scheduled_for_ms set before the boot
+                // would silently miss its fire time.
+                runCatching { reminderAlarmScheduler.rescheduleAll() }
+                    .onFailure { Log.w(TAG, "reminder reschedule on boot failed: ${it.message}") }
                 // WorkManager periodic workers (Growth, MemorySync,
                 // SelfOrganizer, Persona) restore themselves
                 // automatically across reboots — we don't need to
