@@ -238,4 +238,6 @@ object RightPaneRoutes {
     const val AppDrawer = "rp_app_drawer"
     const val Timeline = "rp_timeline"
     const val Tasks = "rp_tasks"
+    /** Tablet-only landing destination — the DashboardHome tile grid. */
+    const val Dashboard = "rp_dashboard"
 }

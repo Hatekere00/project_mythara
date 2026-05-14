@@ -20,7 +20,9 @@ import com.mythara.ui.about.AboutScreen
 import com.mythara.ui.auth.AuthGate
 import com.mythara.ui.auth.AuthViewModel
 import com.mythara.ui.chat.ChatScreen
+import com.mythara.ui.dashboard.DashboardLayout
 import com.mythara.ui.onboarding.OnboardingScreen
+import com.mythara.ui.util.isTabletDisplay
 import com.mythara.ui.secret.SecretSettingsScreen
 import com.mythara.ui.secret.SecretUnlockDialog
 import com.mythara.ui.settings.SettingsScreen
@@ -124,17 +126,23 @@ fun MytharaRoot(
                         }
                     }
 
-                    // Width-based layout pivot. Compact width = single-
-                    // pane NavHost (the existing phone path). Medium /
-                    // Expanded = side-by-side: chat permanently on the
-                    // left, secondary destinations (settings / people /
-                    // about / secret) opening on the right pane. The
-                    // right pane gets its own NavController so right-
-                    // side navigation doesn't replace the chat surface.
-                    val isExpanded = windowSize != null &&
-                        windowSize.widthSizeClass != androidx.compose.material3.windowsizeclass.WindowWidthSizeClass.Compact
+                    // 3-way layout pivot:
+                    //   Compact            → single-pane NavHost (phones)
+                    //   Non-compact + tablet (smallestScreenWidthDp ≥ 720)
+                    //                     → DashboardLayout (command center)
+                    //   Non-compact + not tablet (i.e. unfolded foldable
+                    //                              or wide window)
+                    //                     → TwoPaneLayout (chat + welcome)
+                    // The tablet check is intentionally NOT the WindowSizeClass
+                    // alone — unfolded foldables also land in Medium/Expanded
+                    // but should keep their existing two-pane layout (their
+                    // form factor doesn't suit a six-tile dashboard).
+                    val isCompact = windowSize == null ||
+                        windowSize.widthSizeClass == androidx.compose.material3.windowsizeclass.WindowWidthSizeClass.Compact
+                    val ctx = androidx.compose.ui.platform.LocalContext.current
+                    val isTablet = !isCompact && ctx.isTabletDisplay()
 
-                    if (!isExpanded) {
+                    if (isCompact) {
                         NavHost(navController = nav, startDestination = Routes.Chat) {
                             composable(Routes.Chat) {
                                 ChatScreen(
@@ -164,6 +172,10 @@ fun MytharaRoot(
                                 SecretSettingsScreen(onBack = { nav.popBackStack() })
                             }
                         }
+                    } else if (isTablet) {
+                        DashboardLayout(
+                            onSecretUnlockRequest = { secretUnlockOpen = true },
+                        )
                     } else {
                         TwoPaneLayout(
                             onSecretUnlockRequest = { secretUnlockOpen = true },
