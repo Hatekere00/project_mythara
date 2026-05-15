@@ -91,8 +91,12 @@ class MusicVocabulary @Inject constructor(
     }
 
     /** Record a user's decode-tap signal. [hit] = the user identified
-     *  the motif before revealing the text. Updates persisted on the
-     *  next debounced flush. */
+     *  the motif before revealing the text. PURELY a counter update —
+     *  never mutates the motif itself. The vocabulary is stable by
+     *  design; the agent is the only thing that decides when (and
+     *  which) words evolve, via [evolve]. The hit/miss totals exist
+     *  so the agent has signal to make those decisions intelligently
+     *  later. */
     suspend fun reinforce(token: String, hit: Boolean) {
         val key = normalise(token)
         if (key.isEmpty()) return
@@ -102,30 +106,57 @@ class MusicVocabulary @Inject constructor(
             val updated = if (hit) {
                 existing.copy(hits = existing.hits + 1)
             } else {
-                // Miss path: bump misses; if confidence has decayed past
-                // the floor and we have enough signal, mutate to a
-                // fresh pitch pattern (next generation) so the user
-                // gets a new shot at learning it.
-                val nextMisses = existing.misses + 1
-                val total = existing.hits + nextMisses
-                if (total >= MIN_RESHAPE_SIGNALS &&
-                    (existing.hits.toFloat() / total) < RESHAPE_CONFIDENCE_FLOOR
-                ) {
-                    Log.d(
-                        TAG,
-                        "reshaping motif for '$key' (gen ${existing.generation} → " +
-                            "${existing.generation + 1}, conf=${existing.confidence})",
-                    )
-                    mintMotif(key, generation = existing.generation + 1)
-                } else {
-                    existing.copy(misses = nextMisses)
-                }
+                existing.copy(misses = existing.misses + 1)
             }
             cache[key] = updated
             _vocab.value = cache.toMap()
             scheduleFlush()
         }
     }
+
+    /**
+     * **Agent-driven evolution.** Called by the agent when it decides
+     * a word's motif should change — e.g. the user has consistently
+     * missed it and the agent has a hypothesis that a fresher pattern
+     * would land better, or the agent wants to bind a richer motif
+     * to a word that's become semantically important. The motif's
+     * generation is bumped and a fresh, unique candidate is minted
+     * (uniqueness check still applies — the new pattern won't collide
+     * with another word's motif). Hit / miss history is preserved so
+     * the agent's signal isn't lost on the new generation.
+     *
+     * The vocabulary never mutates on its own; this is the ONLY
+     * non-additive write path. Returns the new motif (or null if
+     * the token isn't in the vocabulary yet).
+     */
+    suspend fun evolve(token: String): Motif? {
+        val key = normalise(token)
+        if (key.isEmpty()) return null
+        ensureLoaded()
+        return cacheLock.withLock {
+            val existing = cache[key] ?: return@withLock null
+            Log.d(
+                TAG,
+                "evolving motif for '$key' (gen ${existing.generation} → ${existing.generation + 1}, " +
+                    "agent-driven, conf=${existing.confidence})",
+            )
+            val fresh = mintMotif(key, generation = existing.generation + 1)
+            // Carry forward the user's hit/miss history; the agent
+            // chose to evolve this slot but the learning data
+            // belongs to the dictionary entry, not the pattern.
+            val withHistory = fresh.copy(hits = existing.hits, misses = existing.misses)
+            cache[key] = withHistory
+            _vocab.value = cache.toMap()
+            scheduleFlush()
+            withHistory
+        }
+    }
+
+    /** Convenience: evolve a batch of tokens in one pass. The agent
+     *  may decide several related words deserve fresh patterns
+     *  together. Order-preserving; missing tokens silently skipped. */
+    suspend fun evolveAll(tokens: List<String>): List<Motif> = tokens
+        .mapNotNull { evolve(it) }
 
     /** Debounced persistence — many reinforce calls in quick
      *  succession (e.g. while a long reply plays out) collapse into a
@@ -398,11 +429,6 @@ class MusicVocabulary @Inject constructor(
 
         /** Sentinel for tokens that normalise to the empty string. */
         val SILENT_MOTIF = Motif(notes = emptyList())
-
-        /** Reshape a motif when confidence < [RESHAPE_CONFIDENCE_FLOOR]
-         *  AND we've had at least this much user feedback for it. */
-        private const val MIN_RESHAPE_SIGNALS = 3
-        private const val RESHAPE_CONFIDENCE_FLOOR = 0.34f
 
         /** DataStore writes are debounced — a long reply may reinforce
          *  many tokens; only flush once after the burst settles. */
