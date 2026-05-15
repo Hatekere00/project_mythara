@@ -388,19 +388,21 @@
             </Condition>
         </Group>
 
-        <!-- ===== REMINDER — split into two slots for the new layout =====
-             The user wanted "In XX minutes" to stay constant + visible
-             on top, with the description marquee-scrolling beneath.
-             A single ComplicationSlot can't carry two visually-distinct
-             pieces (no string-split in WFF), so we use two slots:
-               slot 4 → ReminderCountdownComplicationService ("in 14 min")
-               slot 5 → ReminderTitleComplicationService     ("Gibraltar
-                                                              dry run")
-             Plus slot 6 for an AOD-only full-wrap render so the
-             always-on display shows the entire reminder line on
-             multiple wrapped lines (active uses the marquee). -->
+        <!-- ===== REMINDER — two slots, both visible in active AND AOD =====
+             Same two-line shape on every mode:
+               slot 4 → countdown ("in 14 min") — bold static, always
+                        in view, no scrolling
+               slot 5 → title ("Gibraltar dry run") — marquee in active,
+                        multi-line WRAP in AOD (separate PartText per
+                        mode so the AOD render doesn't try to run an
+                        animation, which AOD blocks anyway)
+             A single ComplicationSlot can't carry two visually-
+             distinct pieces (no WFF string-split), hence two slots
+             pulling from two complication services. -->
 
-        <!-- Countdown — bold orange, static, always in view. -->
+        <!-- Countdown — bold orange, static, always in view in BOTH
+             modes. No Variant alpha=0 anywhere; renders identically
+             active + AOD since "in 14 min" is short and self-fits. -->
         <ComplicationSlot slotId="4" x="55" y="265" width="340" height="24"
             supportedTypes="SHORT_TEXT LONG_TEXT EMPTY">
             <BoundingOval x="0" y="0" width="340" height="24" />
@@ -411,7 +413,6 @@
                 defaultSystemProviderType="SHORT_TEXT" />
             <Complication type="SHORT_TEXT">
                 <PartText x="0" y="0" width="340" height="24">
-                    <Variant mode="AMBIENT" target="alpha" value="0" />
                     <Text align="CENTER" maxLines="1">
                         <Font family="jetbrains_mono_regular" size="16" weight="BOLD" color="#ffffb000">
                             <Template><![CDATA[⏰ %s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
@@ -421,7 +422,6 @@
             </Complication>
             <Complication type="LONG_TEXT">
                 <PartText x="0" y="0" width="340" height="24">
-                    <Variant mode="AMBIENT" target="alpha" value="0" />
                     <Text align="CENTER" maxLines="1">
                         <Font family="jetbrains_mono_regular" size="16" weight="BOLD" color="#ffffb000">
                             <Template><![CDATA[⏰ %s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
@@ -432,20 +432,35 @@
             <Complication type="EMPTY" />
         </ComplicationSlot>
 
-        <!-- Title — marquee-scrolls beneath the countdown. -->
-        <ComplicationSlot slotId="5" x="55" y="291" width="340" height="20"
+        <!-- Title — slot tall enough to wrap multi-line in AOD, while
+             active mode renders only the top-line marquee. Two
+             PartText siblings inside each Complication: the marquee
+             one is visible in active + hidden in AOD; the wrap one
+             is hidden in active + visible in AOD. Same complication
+             text feeds both. -->
+        <ComplicationSlot slotId="5" x="20" y="291" width="410" height="80"
             supportedTypes="SHORT_TEXT LONG_TEXT EMPTY">
-            <BoundingOval x="0" y="0" width="340" height="20" />
+            <BoundingOval x="0" y="0" width="410" height="80" />
             <DefaultProviderPolicy
                 primaryProvider="com.mythara.debug/com.mythara.wear.complications.ReminderTitleComplicationService"
                 primaryProviderType="LONG_TEXT"
                 defaultSystemProvider="WATCH_BATTERY"
                 defaultSystemProviderType="SHORT_TEXT" />
             <Complication type="SHORT_TEXT">
+                <!-- Active: marquee single-line in top of slot. -->
                 <PartText x="0" y="0" width="900" height="20">
                     <Variant mode="AMBIENT" target="alpha" value="0" />
                     <Transform target="x" value="0 - (([SECOND] * 8) % 700)" />
                     <Text align="START" maxLines="1">
+                        <Font family="jetbrains_mono_regular" size="13" color="#ffffb000">
+                            <Template><![CDATA[%s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
+                        </Font>
+                    </Text>
+                </PartText>
+                <!-- AOD: full multi-line wrap, centered, fills slot. -->
+                <PartText x="0" y="0" width="410" height="80" alpha="0">
+                    <Variant mode="AMBIENT" target="alpha" value="255" />
+                    <Text align="CENTER" maxLines="4">
                         <Font family="jetbrains_mono_regular" size="13" color="#ffffb000">
                             <Template><![CDATA[%s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
                         </Font>
@@ -462,39 +477,11 @@
                         </Font>
                     </Text>
                 </PartText>
-            </Complication>
-            <Complication type="EMPTY" />
-        </ComplicationSlot>
-
-        <!-- AOD-ONLY full wrap. Hidden in active, shown in ambient.
-             Uses the combined ReminderComplicationService text
-             ("in 14 min - title") so AOD shows everything on one
-             surface. Tall slot (h=120) so a long reminder wraps to
-             multiple centered lines instead of getting clipped. -->
-        <ComplicationSlot slotId="6" x="10" y="260" width="430" height="120"
-            supportedTypes="SHORT_TEXT LONG_TEXT EMPTY">
-            <BoundingOval x="0" y="0" width="430" height="120" />
-            <DefaultProviderPolicy
-                primaryProvider="com.mythara.debug/com.mythara.wear.complications.ReminderComplicationService"
-                primaryProviderType="LONG_TEXT"
-                defaultSystemProvider="WATCH_BATTERY"
-                defaultSystemProviderType="SHORT_TEXT" />
-            <Complication type="SHORT_TEXT">
-                <PartText x="0" y="0" width="430" height="120" alpha="0">
+                <PartText x="0" y="0" width="410" height="80" alpha="0">
                     <Variant mode="AMBIENT" target="alpha" value="255" />
-                    <Text align="CENTER" maxLines="6">
-                        <Font family="jetbrains_mono_regular" size="13" weight="BOLD" color="#ffffb000">
-                            <Template><![CDATA[⏰ %s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
-                        </Font>
-                    </Text>
-                </PartText>
-            </Complication>
-            <Complication type="LONG_TEXT">
-                <PartText x="0" y="0" width="430" height="120" alpha="0">
-                    <Variant mode="AMBIENT" target="alpha" value="255" />
-                    <Text align="CENTER" maxLines="6">
-                        <Font family="jetbrains_mono_regular" size="13" weight="BOLD" color="#ffffb000">
-                            <Template><![CDATA[⏰ %s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
+                    <Text align="CENTER" maxLines="4">
+                        <Font family="jetbrains_mono_regular" size="13" color="#ffffb000">
+                            <Template><![CDATA[%s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
                         </Font>
                     </Text>
                 </PartText>
