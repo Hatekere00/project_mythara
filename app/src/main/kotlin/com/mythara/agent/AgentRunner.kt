@@ -14,6 +14,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -62,6 +63,11 @@ class AgentRunner @Inject constructor(
     private val moodTracker: com.mythara.agent.mood.ChatMoodTracker,
     private val settings: com.mythara.data.SettingsStore,
     private val replyNotification: ReplyNotification,
+    /** When the user has Music Mode on, the agent's reply is voiced
+     *  as a tone phrase instead of being spoken via TTS. Reading this
+     *  here keeps the gating in one place — both the TTS path and the
+     *  ChatViewModel's tone-playback path observe the same flag. */
+    private val musicMode: com.mythara.data.MusicModeStore,
 ) {
     /**
      * Process-wide scope. SupervisorJob so one failing turn doesn't
@@ -271,6 +277,14 @@ class AgentRunner @Inject constructor(
         // Never speak notification-triage turns — they belong in the
         // chat + shade, not the speaker.
         if (fromNotification) return
+        // Music Mode is the user's tone-encoded secret language; while
+        // it's on, the reply is voiced as motifs by MusicToneEngine
+        // and we suppress TTS so the two don't talk over each other.
+        // Reading the flag synchronously via first() — the
+        // MusicModeStore is backed by DataStore so this is cheap.
+        val musicOn = runCatching { musicMode.enabledFlow().first() }
+            .getOrDefault(false)
+        if (musicOn) return
         // Mirror the previous ChatViewModel.Finished handling: strip
         // <think> reasoning, the max-iter sentinel, markdown, then
         // truncate for TTS and pick the right locale for the reply.
