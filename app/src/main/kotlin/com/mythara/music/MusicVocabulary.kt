@@ -171,20 +171,19 @@ class MusicVocabulary @Inject constructor(
                     if (notes.isNotEmpty()) cache[k] = Motif(notes, h, m, g)
                 }.onFailure { Log.w(TAG, "skipping malformed vocab entry '$k': ${it.message}") }
             }
-            // One-shot migration: any motif whose notes don't come
-            // from the current OM-harmonic scale was minted on the
-            // legacy pentatonic — reshape it now so colour lookups
-            // and the underlying tone playback both line up. Keeps
-            // hit/miss history but bumps the generation so the user
-            // gets a fresh pitch pattern that matches the new scale.
+            // One-shot migration: if any motif uses pitches outside
+            // the OM-harmonic scale, the vocabulary was minted under
+            // the old pentatonic system. Wipe it so the user starts
+            // fresh at the caveman tier (1-note motifs) and the
+            // language can evolve naturally from there. Trying to
+            // preserve old motifs across the redesign would mix
+            // caveman-tier new words with adult-tier legacy ones in
+            // the same reply — confusing rather than learnable.
             val omSet = OM_HARMONICS.toSet()
-            val toMigrate = cache.filter { (_, m) -> m.notes.any { it !in omSet } }
-            if (toMigrate.isNotEmpty()) {
-                for ((key, old) in toMigrate) {
-                    val fresh = mintMotif(key, generation = old.generation + 1)
-                    cache[key] = fresh.copy(hits = old.hits, misses = old.misses)
-                }
-                Log.d(TAG, "migrated ${toMigrate.size} motif(s) onto OM-harmonic scale")
+            val hasLegacy = cache.values.any { m -> m.notes.any { it !in omSet } }
+            if (hasLegacy) {
+                Log.d(TAG, "clearing legacy pentatonic vocabulary (${cache.size} motif(s))")
+                cache.clear()
                 scheduleFlush()
             }
             _vocab.value = cache.toMap()
@@ -195,10 +194,14 @@ class MusicVocabulary @Inject constructor(
 
     /** Deterministic motif minter. Uses a stable hash of the token (+
      *  generation, so reshaped motifs differ from their predecessor)
-     *  to pick [NOTES_PER_MOTIF] notes from the [OM_HARMONICS] scale. */
+     *  to pick notes from the [OM_HARMONICS] scale. The note count
+     *  comes from the user's CURRENT learning tier (see
+     *  [notesPerMotifFor]) so the language starts at caveman-simple
+     *  and grows in complexity as the vocabulary itself grows. */
     private fun mintMotif(key: String, generation: Int): Motif {
         val seed = stableHash("$key|$generation")
-        val notes = (0 until NOTES_PER_MOTIF).map { i ->
+        val count = notesPerMotifFor(cache.size).coerceIn(1, MAX_NOTES_PER_MOTIF)
+        val notes = (0 until count).map { i ->
             val mixed = seed.rotateLeft(i * 7) xor (i.toLong() * 0x9E3779B9L)
             OM_HARMONICS[(abs(mixed) % OM_HARMONICS.size).toInt()]
         }
@@ -224,12 +227,40 @@ class MusicVocabulary @Inject constructor(
             .trim()
     }
 
+    /** Notes-per-motif at the user's current learning tier. Grows
+     *  monotonically with vocabulary size:
+     *
+     *   0–7 words   1 note   "caveman" — one sound per word, max
+     *                        eight unique words before collisions
+     *                        force a step up
+     *   8–31        2 notes  "toddler" — pairs
+     *   32–127      3 notes  "adult"   — phrases (the original tier)
+     *   128–511     4 notes  "advanced"
+     *   512+        5 notes  "expert" cap
+     *
+     *  The tier is read at mint-time only — existing motifs keep
+     *  whatever complexity they were born at, so a word you learned
+     *  as a single caveman tone stays a single caveman tone even
+     *  after the vocabulary grows past the threshold. Only fresh
+     *  words climb the ladder. */
+    fun currentTierNotesPerMotif(): Int = notesPerMotifFor(cache.size)
+
+    private fun notesPerMotifFor(vocabSize: Int): Int = when {
+        vocabSize < 8 -> 1
+        vocabSize < 32 -> 2
+        vocabSize < 128 -> 3
+        vocabSize < 512 -> 4
+        else -> 5
+    }
+
     companion object {
         private const val TAG = "Mythara/MusicVocab"
 
-        /** Number of notes per motif — short enough to feel like a
-         *  single "word", long enough to be distinguishable. */
-        const val NOTES_PER_MOTIF = 3
+        /** Hard cap on a single motif's note count. The render loop
+         *  in [MusicToneEngine] plays each note for ~180 ms, so a
+         *  cap of 5 means a single word is voiced in well under
+         *  1.5 s even at the top tier. */
+        const val MAX_NOTES_PER_MOTIF = 5
 
         /** Harmonic series of 136.1 Hz — the Sanskrit "OM" base
          *  frequency (Hans Cousto's calculation, derived from Earth's
