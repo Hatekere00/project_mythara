@@ -97,6 +97,10 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material3.window.sizeclass)
+    // androidx.window — exposes FoldingFeature (FLAT vs HALF_OPENED)
+    // for the rose-bloom fold-open animation. WindowSizeClass alone
+    // gives us width buckets but not posture transitions.
+    implementation(libs.androidx.window)
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.navigation.compose)
     debugImplementation(libs.androidx.ui.tooling)

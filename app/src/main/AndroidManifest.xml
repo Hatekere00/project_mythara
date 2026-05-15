@@ -126,7 +126,9 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
-            android:theme="@style/Theme.Mythara.Splash">
+            android:theme="@style/Theme.Mythara.Splash"
+            android:resizeableActivity="true"
+            android:configChanges="screenLayout|screenSize|smallestScreenSize|orientation|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

@@ -140,6 +140,13 @@ def parse_args() -> argparse.Namespace:
              "Used to bake static layers for the live wallpaper, which "
              "renders a mood-derived dynamic gradient underneath the PNG",
     )
+    p.add_argument(
+        "--silhouette-only",
+        action="store_true",
+        help="render ONLY the warrior silhouette on a transparent canvas "
+             "(no gradient, no mesh, no rose, no wordmark). Used to bake "
+             "the bloom-overlay asset for the in-app fold-open animation",
+    )
     return p.parse_args()
 
 
@@ -544,6 +551,30 @@ def main() -> None:
     #   5. wordmark + version + tagline (anchored to bottom)
     # Steps 2+ all alpha-composite, so promote to RGBA after the
     # gradient is laid down.
+    # --silhouette-only short-circuits the whole pipeline — render
+    # JUST the tinted warrior on a transparent canvas, save, exit.
+    # Used to bake the bloom-overlay asset for the in-app fold-open
+    # animation. Forces transparency + skips every other layer.
+    if args.silhouette_only:
+        img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        if not args.character:
+            sys.exit("--silhouette-only requires --character <path>")
+        margin = int(h * 0.04)
+        silhouette_avail_h = h - 2 * margin
+        silhouette_frac = silhouette_avail_h / h
+        render_silhouette(
+            img,
+            Path(args.character).expanduser(),
+            target_y_top=margin,
+            max_alpha=args.silhouette_alpha,
+            target_height_frac=silhouette_frac,
+            vertically_center=True,
+        )
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        img.save(args.out, "PNG", optimize=True)
+        print(f"wrote {args.out} ({w}x{h}) [silhouette-only]")
+        return
+
     if args.no_gradient:
         # Transparent canvas — used to bake static layers for the
         # live wallpaper, which renders a mood-derived dynamic

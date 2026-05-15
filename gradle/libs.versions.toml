@@ -33,6 +33,10 @@ vosk = "0.3.47"
 jna = "5.13.0"
 mediapipeText = "0.10.14"
 healthConnect = "1.1.0-alpha07"
+# Jetpack WindowManager — fold-posture awareness via FoldingFeature
+# (FLAT vs HALF_OPENED) on the Pixel 9 Pro Fold + other foldables.
+# WindowSizeClass alone can't distinguish folded vs unfolded.
+window = "1.3.0"
 # Wear OS Health Services — modern, Galaxy-Watch-compatible HR API.
 # Legacy SensorManager.TYPE_HEART_RATE is silent on most Samsung
 # watches; HealthServices.getClient(...).measureClient is the
@@ -77,6 +81,7 @@ androidx-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
 androidx-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
 androidx-material3 = { group = "androidx.compose.material3", name = "material3", version.ref = "material3" }
 androidx-material3-window-sizeclass = { group = "androidx.compose.material3", name = "material3-window-size-class", version.ref = "material3" }
+androidx-window = { group = "androidx.window", name = "window", version.ref = "window" }
 androidx-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
 androidx-splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "splashscreen" }

@@ -381,28 +381,14 @@ fun ChatScreen(
         )
         }
 
-        // Floating nav menu — replaces the old top pill row, reclaiming
-        // the vertical band it used to occupy.
-        ChatMenuFab(
-            thinking = ui.thinking,
-            continuousMode = ui.continuousMode,
-            onToggleContinuous = { vm.setContinuousMode(!ui.continuousMode) },
-            onOpenPeople = onOpenPeople,
-            onOpenTimeline = openTimeline,
-            onOpenAppDrawer = openDrawer,
-            onOpenTasks = openTasks,
-            onOpenSettings = onOpenSettings,
-            onOpenFace = onOpenFace,
-            onOpenAboutMe = onOpenAboutMe,
-            onOpenInsights = onOpenInsights,
-            // Vocabulary entry only when music mode is on AND the
-            // host wired a callback. No-op-friendly otherwise.
-            onOpenMusicVocab = if (ui.musicMode) onOpenMusicVocab else null,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(insets)
-                .padding(top = 6.dp, end = 12.dp),
-        )
+        // ChatMenuFab call site removed — navigation now flows
+        // through the persistent rose amulet at the bottom-centre
+        // (see com.mythara.ui.amulet.RoseAmulet) which surfaces the
+        // same destinations via a swipe-up Constellation. The
+        // ChatMenuFab function itself remains defined in this file
+        // for one release as a fallback, in case we need to revert.
+        // To revert: drop a ChatMenuFab(...) call back into this
+        // Box, sized to TopEnd as before.
     }
 
     // ConfirmationGate dialog overlay. Renders the topmost pending

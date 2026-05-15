@@ -79,6 +79,7 @@ class NotificationActionStore @Inject constructor(
 
     private val keyEnabled = booleanPreferencesKey("pkg.enabled")
     private val keyLog = stringPreferencesKey("dismissed.log")
+    private val keyExempt = stringPreferencesKey("pkg.exempt")
     private fun countsKey(pkg: String) = stringPreferencesKey("pkg.counts.$pkg")
 
     private val json = Json { encodeDefaults = false; ignoreUnknownKeys = true }
@@ -136,8 +137,13 @@ class NotificationActionStore @Inject constructor(
      * this pkg AND the dismissal:click ratio is ≥ DISMISS_RATIO.
      * That way one accidental dismiss doesn't trigger; we need a
      * clear pattern.
+     *
+     * Hard exemption: the user can mark a package as "important —
+     * never auto-dismiss" through the Triage screen. That overrides
+     * any learned pattern below.
      */
     suspend fun shouldAutoDismiss(pkg: String): Boolean {
+        if (isExempt(pkg)) return false
         val c = counts(pkg)
         // Rule A — explicit pattern: many manual dismisses, high
         // dismiss:click ratio.
@@ -156,6 +162,46 @@ class NotificationActionStore @Inject constructor(
         }
         return false
     }
+
+    // ─── User-managed exemption set ──────────────────────────────────
+    // Apps the user has explicitly tagged as "important — never
+    // auto-dismiss" from the Triage UI. Persisted as a comma-
+    // separated string of package names; the in-memory shape used
+    // by the rest of the codebase is a Set<String>.
+
+    fun exemptFlow(): Flow<Set<String>> =
+        ctx.dataStore.data.map { decodeExempt(it[keyExempt]) }
+
+    suspend fun exempt(): Set<String> =
+        decodeExempt(ctx.dataStore.data.first()[keyExempt])
+
+    suspend fun isExempt(pkg: String): Boolean = pkg in exempt()
+
+    /** Add `pkg` to the "never auto-dismiss" set. Idempotent. */
+    suspend fun markImportant(pkg: String) {
+        ctx.dataStore.edit { prefs ->
+            val cur = decodeExempt(prefs[keyExempt])
+            if (pkg !in cur) {
+                prefs[keyExempt] = encodeExempt(cur + pkg)
+            }
+        }
+    }
+
+    /** Remove `pkg` from the exempt set so the learned-pattern
+     *  decision rules apply again. Idempotent. */
+    suspend fun unmarkImportant(pkg: String) {
+        ctx.dataStore.edit { prefs ->
+            val cur = decodeExempt(prefs[keyExempt])
+            if (pkg in cur) {
+                prefs[keyExempt] = encodeExempt(cur - pkg)
+            }
+        }
+    }
+
+    private fun decodeExempt(raw: String?): Set<String> =
+        raw?.split(',')?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
+
+    private fun encodeExempt(set: Set<String>): String = set.joinToString(",")
 
     suspend fun recentDismissals(limit: Int = MAX_LOG): List<DismissedEntry> {
         val raw = ctx.dataStore.data.first()[keyLog] ?: return emptyList()
