@@ -1,10 +1,10 @@
 package com.mythara.lifeline
 
 import android.util.Log
+import com.mythara.ai.ModelRouter
 import com.mythara.audit.AuditEntry
 import com.mythara.audit.AuditRepository
 import com.mythara.memory.Tier
-import com.mythara.secret.observe.extract.gemma.GemmaExtractor
 import com.mythara.secret.observe.vault.LearningEntity
 import com.mythara.secret.observe.vault.LearningVault
 import kotlinx.coroutines.Dispatchers
@@ -38,7 +38,7 @@ class DaySummaryBuilder @Inject constructor(
     private val lifelineRepo: LifelineRepository,
     private val auditRepo: AuditRepository,
     private val vault: LearningVault,
-    private val gemma: GemmaExtractor,
+    private val router: ModelRouter,
 ) {
 
     /**
@@ -131,9 +131,9 @@ class DaySummaryBuilder @Inject constructor(
         meaningful: List<LearningEntity>,
         photos: List<LifelineEntity>,
     ): String {
-        // Gemma narrative when the model's loaded and there's enough to
-        // say; heuristic line otherwise.
-        if (gemma.isReady() && (meaningful.isNotEmpty() || interactions.size >= 2 || photos.size >= 3)) {
+        // Model-written narrative when a model is available and there's
+        // enough to say; heuristic line otherwise.
+        if (router.canInfer() && (meaningful.isNotEmpty() || interactions.size >= 2 || photos.size >= 3)) {
             val material = buildString {
                 if (contacts.isNotEmpty()) {
                     append("Connected with: ").append(contacts.joinToString(", ")).append(".\n")
@@ -157,7 +157,7 @@ class DaySummaryBuilder @Inject constructor(
                     "the meaningful moments, who they connected with, and what they learned or did. " +
                     "Natural, warm past tense; refer to the user as 'you'. No preamble, no markdown, no lists.\n\n" +
                     "Notes for ${day.format(HUMAN_DATE)}:\n$material\n\nReturn the paragraph."
-            val raw = runCatching { gemma.runRaw(prompt, maxLen = 360) }.getOrNull()?.trim()
+            val raw = runCatching { router.runRaw(prompt, 360, heavy = false) }.getOrNull()?.trim()
             if (!raw.isNullOrBlank() && raw.length >= 20) return raw
         }
 

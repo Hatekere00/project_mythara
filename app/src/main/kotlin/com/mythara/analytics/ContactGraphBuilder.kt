@@ -1,7 +1,7 @@
 package com.mythara.analytics
 
 import android.util.Log
-import com.mythara.secret.observe.extract.gemma.GemmaExtractor
+import com.mythara.ai.ModelRouter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
@@ -46,7 +46,7 @@ import kotlin.math.sqrt
 @Singleton
 class ContactGraphBuilder @Inject constructor(
     private val repo: ContactProfileRepository,
-    private val gemma: GemmaExtractor,
+    private val router: ModelRouter,
 ) {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
@@ -107,7 +107,7 @@ class ContactGraphBuilder @Inject constructor(
         Graph(
             nodes,
             relatesEdges(profiles, refined) + arithmetic + knows,
-            gemmaUsed = gemma.isReady(),
+            gemmaUsed = router.canInfer(),
         )
     }
 
@@ -183,7 +183,7 @@ class ContactGraphBuilder @Inject constructor(
      * cheap heuristic label.
      */
     private suspend fun relatesLabels(profiles: List<ContactProfileRow>): Map<String, String> {
-        if (!gemma.isReady()) return emptyMap()
+        if (!router.canInfer()) return emptyMap()
         val candidates = profiles
             .filter { !it.userNotes.isNullOrBlank() || !it.relationshipSummary.isNullOrBlank() }
             .sortedWith(
@@ -220,7 +220,7 @@ class ContactGraphBuilder @Inject constructor(
             )
         }
 
-        val raw = runCatching { gemma.runRaw(prompt, maxLen = KNOWS_MAX_LEN) }.getOrNull()
+        val raw = runCatching { router.runRaw(prompt, KNOWS_MAX_LEN, heavy = true) }.getOrNull()
             ?: return emptyMap()
         val arrText = extractFirstJsonArray(raw) ?: return emptyMap()
         val arr = runCatching { json.parseToJsonElement(arrText) as? JsonArray }.getOrNull()
@@ -314,7 +314,7 @@ class ContactGraphBuilder @Inject constructor(
      * graph's KNOWS edges are described THROUGH those notes.
      */
     private suspend fun knowsEdges(profiles: List<ContactProfileRow>): List<Edge> {
-        if (!gemma.isReady()) return emptyList()
+        if (!router.canInfer()) return emptyList()
         val candidates = profiles
             .filter { !it.userNotes.isNullOrBlank() || !it.relationshipSummary.isNullOrBlank() }
             .sortedWith(
@@ -351,7 +351,7 @@ class ContactGraphBuilder @Inject constructor(
             )
         }
 
-        val raw = runCatching { gemma.runRaw(prompt, maxLen = KNOWS_MAX_LEN) }.getOrNull()
+        val raw = runCatching { router.runRaw(prompt, KNOWS_MAX_LEN, heavy = true) }.getOrNull()
             ?: return emptyList()
         val arrText = extractFirstJsonArray(raw) ?: return emptyList()
         val arr = runCatching { json.parseToJsonElement(arrText) as? JsonArray }.getOrNull()

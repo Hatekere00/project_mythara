@@ -1,5 +1,6 @@
 package com.mythara.minimax
 
+import com.mythara.minimax.models.ChatRequest
 import com.mythara.minimax.models.ChatResponse
 import com.mythara.minimax.models.ModelsResponse
 import com.mythara.minimax.models.VisionChatRequest
@@ -28,4 +29,14 @@ interface MiniMaxApi {
      */
     @POST("chat/completions")
     suspend fun chatCompletionNonStreaming(@Body request: VisionChatRequest): Response<ChatResponse>
+
+    /**
+     * Non-streaming TEXT chat completion — used by [com.mythara.ai.ModelRouter]
+     * for one-shot insight generation (Big Five, relationship graph,
+     * persona). No SSE machinery: the prompt goes in, the whole answer
+     * comes back in `choices[0].message.content`. The request must set
+     * `stream = false`.
+     */
+    @POST("chat/completions")
+    suspend fun chatCompletionText(@Body request: ChatRequest): Response<ChatResponse>
 }

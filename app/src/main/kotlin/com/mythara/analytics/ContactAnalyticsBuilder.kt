@@ -1,8 +1,8 @@
 package com.mythara.analytics
 
 import android.util.Log
+import com.mythara.ai.ModelRouter
 import com.mythara.data.FavoritesStore
-import com.mythara.secret.observe.extract.gemma.GemmaExtractor
 import com.mythara.secret.observe.vault.LearningEntity
 import com.mythara.secret.observe.vault.LearningVault
 import kotlinx.coroutines.Dispatchers
@@ -57,7 +57,7 @@ class ContactAnalyticsBuilder @Inject constructor(
     private val vault: LearningVault,
     private val repo: ContactProfileRepository,
     private val favorites: FavoritesStore,
-    private val gemma: GemmaExtractor,
+    private val router: ModelRouter,
     private val userAliases: com.mythara.data.UserAliasesStore,
     private val analysisInstructions: com.mythara.analysis.AnalysisInstructionStore,
 ) {
@@ -143,6 +143,9 @@ class ContactAnalyticsBuilder @Inject constructor(
         // Self-evolving analysis guidelines (taught via web reads /
         // save_analysis_instruction) — prepended to every Gemma prompt.
         val instructionBlock = runCatching { analysisInstructions.promptBlock("contacts") }.getOrDefault("")
+        // One model-availability check for the whole pass — local Gemma
+        // loaded, OR a MiniMax key configured with a live network.
+        val canInfer = router.canInfer()
 
         var rebuilt = 0
         var skipped = 0
@@ -165,18 +168,24 @@ class ContactAnalyticsBuilder @Inject constructor(
             // "HDFC BANK" is noise. Personality analysis stays scoped to
             // real, named people.
             val isPersonal = ContactClassifier.isPersonal(displayName, phone)
+            // A user-written note is authoritative signal — it always
+            // makes the contact eligible for, and in need of, a fresh
+            // inference, even below the message-count threshold.
+            val hasNotes = !existing?.userNotes.isNullOrBlank()
+            val enoughSignal = rows.size >= ContactProfileRow.MIN_BIG_FIVE_SAMPLE || hasNotes
 
             val needsInference = isPersonal && (
                 force ||
                     existing == null ||
+                    hasNotes ||
                     rows.size >= ContactProfileRow.MIN_BIG_FIVE_SAMPLE &&
                     (existing.openness == null ||
                         (System.currentTimeMillis() - (existing.bigFiveLastUpdatedMs ?: 0)) > REINFER_INTERVAL_MS ||
                         rows.size >= (existing.bigFiveSampleSize * REINFER_GROW_RATIO).toInt())
                 )
 
-            val infer = if (needsInference && rows.size >= ContactProfileRow.MIN_BIG_FIVE_SAMPLE && gemma.isReady()) {
-                Log.d(TAG, "inference for $displayName: rows=${rows.size} gemmaReady=${gemma.isReady()} → running")
+            val infer = if (needsInference && enoughSignal && canInfer) {
+                Log.d(TAG, "inference for $displayName: rows=${rows.size} notes=$hasNotes → running")
                 runCatching {
                     runGemmaInference(displayName, rows, existing?.userNotes, instructionBlock)
                 }.getOrNull()
@@ -184,8 +193,7 @@ class ContactAnalyticsBuilder @Inject constructor(
                 Log.d(
                     TAG,
                     "inference for $displayName SKIPPED — personal=$isPersonal needsInference=$needsInference " +
-                        "rows=${rows.size} (need ≥${ContactProfileRow.MIN_BIG_FIVE_SAMPLE}) " +
-                        "gemmaReady=${gemma.isReady()}",
+                        "rows=${rows.size} notes=$hasNotes enoughSignal=$enoughSignal canInfer=$canInfer",
                 )
                 null
             }
@@ -277,8 +285,11 @@ class ContactAnalyticsBuilder @Inject constructor(
         val existing = repo.dao.byKey(key) ?: return@withContext false
         val all = runCatching { vault.listAll() }.getOrDefault(emptyList())
         val rows = groupByContact(all)[key].orEmpty()
-        if (rows.size < ContactProfileRow.MIN_BIG_FIVE_SAMPLE || !gemma.isReady()) {
-            Log.d(TAG, "rebuildContact($key) skipped — rows=${rows.size} gemmaReady=${gemma.isReady()}")
+        // A user note is authoritative signal — re-infer on a note even
+        // when the contact has too few messages to otherwise qualify.
+        val hasNotes = !existing.userNotes.isNullOrBlank()
+        if ((rows.size < ContactProfileRow.MIN_BIG_FIVE_SAMPLE && !hasNotes) || !router.canInfer()) {
+            Log.d(TAG, "rebuildContact($key) skipped — rows=${rows.size} notes=$hasNotes")
             return@withContext false
         }
         val instructionBlock = runCatching { analysisInstructions.promptBlock("contacts") }.getOrDefault("")
@@ -411,10 +422,12 @@ class ContactAnalyticsBuilder @Inject constructor(
         // first, then the user's authoritative notes on this contact.
         val preamble = instructionBlock + notesBlock(notes)
 
+        // Relationship summary — a short summary, kept LIGHT (local Gemma).
         val summary = runCatching {
-            gemma.summarise(
+            router.summarise(
                 buildSummaryPrompt(displayName, text, preamble, hasNotes = notes != null),
                 maxLen = SUMMARY_MAX_LEN,
+                heavy = false,
             )
         }.getOrNull()
 
@@ -457,7 +470,8 @@ class ContactAnalyticsBuilder @Inject constructor(
         preamble: String,
     ): String? {
         val prompt = buildPersonalityInsightsPrompt(displayName, bigFive, preamble)
-        val raw = runCatching { gemma.runRaw(prompt, maxLen = INSIGHTS_MAX_LEN) }.getOrNull()
+        // Heavy synthesis — distilling Big Five into guidance → router.
+        val raw = runCatching { router.runRaw(prompt, INSIGHTS_MAX_LEN, heavy = true) }.getOrNull()
             ?: return null
         return raw.trim().takeIf { it.isNotEmpty() && it.length >= 20 }
     }
@@ -516,7 +530,8 @@ class ContactAnalyticsBuilder @Inject constructor(
         // Use runRaw — summarise() wraps the prompt as content-to-be-
         // summarised, which would collapse the JSON-array instruction
         // into a paragraph (same bug Big Five hit before this fix).
-        val raw = runCatching { gemma.runRaw(prompt, maxLen = KEY_POINTS_MAX_LEN) }.getOrNull()
+        // Heavy synthesis → router (MiniMax when available).
+        val raw = runCatching { router.runRaw(prompt, KEY_POINTS_MAX_LEN, heavy = true) }.getOrNull()
             ?: return emptyList()
         val arr = extractFirstJsonArray(raw) ?: return emptyList()
         return runCatching {
@@ -585,13 +600,12 @@ class ContactAnalyticsBuilder @Inject constructor(
      */
     private suspend fun runBigFive(displayName: String, text: String, preamble: String): BigFiveOut? {
         val prompt = buildBigFivePrompt(displayName, text, preamble)
-        // Reuse extractWithMood as a structured Gemma call; we ignore
-        // the facts/mood it returns and look for the raw JSON in the
-        // model's response by querying gemma.summarise (which returns
-        // the LLM's literal output, not a parsed structure).
-        val raw = runCatching { gemma.runRaw(prompt, maxLen = BIG_FIVE_MAX_LEN) }.getOrNull()
+        // Big Five is heavy structured synthesis → router (MiniMax when
+        // available, local Gemma otherwise). We ask for raw JSON and
+        // pick the first balanced { ... } out of the response.
+        val raw = runCatching { router.runRaw(prompt, BIG_FIVE_MAX_LEN, heavy = true) }.getOrNull()
         if (raw.isNullOrBlank()) {
-            Log.w(TAG, "big-five for $displayName: gemma.runRaw returned ${if (raw == null) "null" else "blank"}")
+            Log.w(TAG, "big-five for $displayName: model returned ${if (raw == null) "null" else "blank"}")
             return null
         }
         Log.d(TAG, "big-five for $displayName: raw gemma output (first 240 chars): ${raw.take(240)}")

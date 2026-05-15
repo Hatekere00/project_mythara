@@ -1,11 +1,11 @@
 package com.mythara.persona
 
 import android.util.Log
+import com.mythara.ai.ModelRouter
 import com.mythara.analysis.AnalysisInstructionStore
 import com.mythara.memory.Tier
 import com.mythara.secret.observe.embed.EmbeddingsModelStore
 import com.mythara.secret.observe.embed.LocalEmbedder
-import com.mythara.secret.observe.extract.gemma.GemmaExtractor
 import com.mythara.secret.observe.vault.LearningVault
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -50,7 +50,7 @@ import javax.inject.Singleton
 class SelfPersonaBuilder @Inject constructor(
     private val vault: LearningVault,
     private val embedder: LocalEmbedder,
-    private val gemma: GemmaExtractor,
+    private val router: ModelRouter,
     private val instructions: AnalysisInstructionStore,
 ) {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -79,8 +79,8 @@ class SelfPersonaBuilder @Inject constructor(
     }
 
     private suspend fun rebuildLocked(force: Boolean): Boolean {
-        if (!gemma.isReady()) {
-            Log.d(TAG, "gemma not ready; skipping self-profile")
+        if (!router.canInfer()) {
+            Log.d(TAG, "no model available (local + cloud both down); skipping self-profile")
             return false
         }
         val semantic = runCatching { vault.listByTier(Tier.Semantic, limit = 600) }
@@ -143,7 +143,7 @@ class SelfPersonaBuilder @Inject constructor(
             "Facts:\n$evidence" +
             (if (healthLine.isNotBlank()) "\nHealth: $healthLine\n" else "") +
             "\nReturn the JSON object now."
-        val b5Raw = runCatching { gemma.runRaw(b5Prompt, maxLen = B5_MAX_LEN) }.getOrNull()
+        val b5Raw = runCatching { router.runRaw(b5Prompt, B5_MAX_LEN, heavy = true) }.getOrNull()
         if (b5Raw.isNullOrBlank()) {
             Log.w(TAG, "gemma returned ${if (b5Raw == null) "null" else "blank"} for self big-five")
             return false
@@ -178,7 +178,7 @@ class SelfPersonaBuilder @Inject constructor(
             "\nWrite ONE concise paragraph (2-3 sentences) describing the user — a grounded read that " +
             "explicitly factors in their health metrics where relevant (sleep, resting-heart-rate trend, " +
             "activity level). No bullet points, no markdown, no preamble. Just the paragraph."
-        val insights = runCatching { gemma.runRaw(insightsPrompt, maxLen = INSIGHTS_MAX_LEN) }
+        val insights = runCatching { router.runRaw(insightsPrompt, INSIGHTS_MAX_LEN, heavy = true) }
             .getOrNull()?.trim()?.takeIf { it.length >= 20 }.orEmpty()
 
         val normalized = buildJsonObject {

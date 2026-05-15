@@ -119,6 +119,12 @@ class AgentRunner @Inject constructor(
      */
     fun submit(text: String, fromVoice: Boolean, pcm: ShortArray?, pcmSampleRate: Int) {
         if (text.isBlank()) return
+        // Notification-triage turns ([notif]-prefixed, fed by the
+        // auto-reply queue) still deliver to the chat + the notification
+        // shade — but they're NEVER spoken. TTS is reserved for the
+        // user's own direct turns; auto-triaging the notification
+        // stream out loud is noise.
+        val fromNotification = text.startsWith(AgentLoop.NOTIF_PREFIX)
         scope.launch {
             beginTurn()
             try {
@@ -140,7 +146,7 @@ class AgentRunner @Inject constructor(
                 agent.submit(text, fromVoice = fromVoice).collect { turn ->
                     _turnEvents.tryEmit(turn)
                     if (turn is AgentLoop.Turn.Finished) {
-                        deliverFinished(turn)
+                        deliverFinished(turn, fromNotification)
                     }
                 }
             } catch (t: Throwable) {
@@ -172,6 +178,7 @@ class AgentRunner @Inject constructor(
      */
     suspend fun submitAndAwait(text: String, fromVoice: Boolean): String? {
         if (text.isBlank()) return null
+        val fromNotification = text.startsWith(AgentLoop.NOTIF_PREFIX)
         val done = CompletableDeferred<String?>()
         scope.launch {
             beginTurn()
@@ -183,7 +190,7 @@ class AgentRunner @Inject constructor(
                     _turnEvents.tryEmit(turn)
                     if (turn is AgentLoop.Turn.Finished) {
                         finalText = turn.finalText
-                        deliverFinished(turn)
+                        deliverFinished(turn, fromNotification)
                     }
                 }
             } catch (t: Throwable) {
@@ -235,21 +242,35 @@ class AgentRunner @Inject constructor(
      *    or the screen is off entirely, so they don't have to
      *    navigate back to find the answer)
      */
-    private suspend fun deliverFinished(turn: AgentLoop.Turn.Finished) {
-        speakIfNeeded(turn)
+    private suspend fun deliverFinished(turn: AgentLoop.Turn.Finished, fromNotification: Boolean) {
+        speakIfNeeded(turn, fromNotification)
         // Reply notification: strip <think> + audio tags + markdown
         // before showing so the shade text is human-readable.
         val cleaned = Thinks.strip(turn.finalText)
             .removeSuffix(" [hit max iterations]")
         val displayText = SpokenText.forSpeech(cleaned, keepAudioTags = false)
-        val nosurface = cleaned.trim()
-            .equals(AgentLoop.NOSURFACE_TOKEN, ignoreCase = true)
-        if (displayText.isNotBlank() && !nosurface) {
+        if (displayText.isNotBlank() && !isNoSurface(cleaned)) {
             replyNotification.postIfBackgrounded(displayText)
         }
     }
 
-    private suspend fun speakIfNeeded(turn: AgentLoop.Turn.Finished) {
+    /**
+     * True when the agent declined to surface this turn. The model is
+     * told to emit the bare [AgentLoop.NOSURFACE_TOKEN] for noise, but
+     * in practice it sometimes trails punctuation or a stray newline +
+     * reasoning after it — so match a leading token, not just an exact
+     * equality, to keep that noise out of TTS + the notification shade.
+     */
+    private fun isNoSurface(cleaned: String): Boolean {
+        val t = cleaned.trim()
+        return t.equals(AgentLoop.NOSURFACE_TOKEN, ignoreCase = true) ||
+            t.startsWith(AgentLoop.NOSURFACE_TOKEN, ignoreCase = true)
+    }
+
+    private suspend fun speakIfNeeded(turn: AgentLoop.Turn.Finished, fromNotification: Boolean) {
+        // Never speak notification-triage turns — they belong in the
+        // chat + shade, not the speaker.
+        if (fromNotification) return
         // Mirror the previous ChatViewModel.Finished handling: strip
         // <think> reasoning, the max-iter sentinel, markdown, then
         // truncate for TTS and pick the right locale for the reply.
@@ -265,9 +286,7 @@ class AgentRunner @Inject constructor(
             .removeSuffix(" [hit max iterations]")
         val spoken = SpokenText.forSpeech(cleaned, keepAudioTags = keepAudioTags)
         val toSpeak = SpokenText.truncateForSpeech(spoken)
-        val nosurface = cleaned.trim()
-            .equals(AgentLoop.NOSURFACE_TOKEN, ignoreCase = true)
-        if (toSpeak.isBlank() || nosurface) return
+        if (toSpeak.isBlank() || isNoSurface(cleaned)) return
         // For language detection, always feed a tag-free string so
         // ML Kit doesn't get confused by '[laugh]' style markers.
         val forDetection = if (keepAudioTags) SpokenText.forSpeech(cleaned, keepAudioTags = false) else toSpeak
