@@ -452,8 +452,9 @@
                             <Expression name="agent_cursor_on_s">[SECOND] % 2 == 0</Expression>
                         </Expressions>
                         <Compare expression="agent_cursor_on_s">
-                            <PartText x="0" y="0" width="340" height="44" alpha="255">
-                                <Text align="START" maxLines="1" ellipsize="MARQUEE">
+                            <PartText x="0" y="0" width="900" height="44" alpha="255">
+                                <Transform target="x" value="0 - (([SECOND] * 8) % 700)" />
+                                <Text align="START" maxLines="1">
                                     <Font family="jetbrains_mono_regular" size="14" color="#ff39ff14">
                                         <Template><![CDATA[> %s|]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
                                     </Font>
@@ -466,8 +467,9 @@
                             <Expression name="agent_cursor_off_s">[SECOND] % 2 == 1</Expression>
                         </Expressions>
                         <Compare expression="agent_cursor_off_s">
-                            <PartText x="0" y="0" width="340" height="44" alpha="255">
-                                <Text align="START" maxLines="1" ellipsize="MARQUEE">
+                            <PartText x="0" y="0" width="900" height="44" alpha="255">
+                                <Transform target="x" value="0 - (([SECOND] * 8) % 700)" />
+                                <Text align="START" maxLines="1">
                                     <Font family="jetbrains_mono_regular" size="14" color="#ff39ff14">
                                         <Template><![CDATA[> %s ]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
                                     </Font>
@@ -485,8 +487,9 @@
                             <Expression name="agent_cursor_on_l">[SECOND] % 2 == 0</Expression>
                         </Expressions>
                         <Compare expression="agent_cursor_on_l">
-                            <PartText x="0" y="0" width="340" height="44" alpha="255">
-                                <Text align="START" maxLines="1" ellipsize="MARQUEE">
+                            <PartText x="0" y="0" width="900" height="44" alpha="255">
+                                <Transform target="x" value="0 - (([SECOND] * 8) % 700)" />
+                                <Text align="START" maxLines="1">
                                     <Font family="jetbrains_mono_regular" size="14" color="#ff39ff14">
                                         <Template><![CDATA[> %s|]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
                                     </Font>
@@ -499,8 +502,9 @@
                             <Expression name="agent_cursor_off_l">[SECOND] % 2 == 1</Expression>
                         </Expressions>
                         <Compare expression="agent_cursor_off_l">
-                            <PartText x="0" y="0" width="340" height="44" alpha="255">
-                                <Text align="START" maxLines="1" ellipsize="MARQUEE">
+                            <PartText x="0" y="0" width="900" height="44" alpha="255">
+                                <Transform target="x" value="0 - (([SECOND] * 8) % 700)" />
+                                <Text align="START" maxLines="1">
                                     <Font family="jetbrains_mono_regular" size="14" color="#ff39ff14">
                                         <Template><![CDATA[> %s ]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
                                     </Font>
