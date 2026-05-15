@@ -388,38 +388,101 @@
             </Condition>
         </Group>
 
-        <!-- ===== REMINDER — next upcoming reminder ===== -->
-        <!-- ComplicationSlot fed by the :wear ReminderComplicationService;
-             the phone pushes the soonest scheduled task. Sits just below
-             the world map, above the agent line. Hidden in ambient via
-             the inner PartText's Variant. -->
-        <ComplicationSlot slotId="4" x="55" y="280" width="340" height="28"
+        <!-- ===== REMINDER — split into two slots for the new layout =====
+             The user wanted "In XX minutes" to stay constant + visible
+             on top, with the description marquee-scrolling beneath.
+             A single ComplicationSlot can't carry two visually-distinct
+             pieces (no string-split in WFF), so we use two slots:
+               slot 4 → ReminderCountdownComplicationService ("in 14 min")
+               slot 5 → ReminderTitleComplicationService     ("Gibraltar
+                                                              dry run")
+             Plus slot 6 for an AOD-only full-wrap render so the
+             always-on display shows the entire reminder line on
+             multiple wrapped lines (active uses the marquee). -->
+
+        <!-- Countdown — bold orange, static, always in view. -->
+        <ComplicationSlot slotId="4" x="55" y="265" width="340" height="24"
             supportedTypes="SHORT_TEXT LONG_TEXT EMPTY">
-            <BoundingOval x="0" y="0" width="340" height="28" />
+            <BoundingOval x="0" y="0" width="340" height="24" />
+            <DefaultProviderPolicy
+                primaryProvider="com.mythara.debug/com.mythara.wear.complications.ReminderCountdownComplicationService"
+                primaryProviderType="SHORT_TEXT"
+                defaultSystemProvider="WATCH_BATTERY"
+                defaultSystemProviderType="SHORT_TEXT" />
+            <Complication type="SHORT_TEXT">
+                <PartText x="0" y="0" width="340" height="24">
+                    <Variant mode="AMBIENT" target="alpha" value="0" />
+                    <Text align="CENTER" maxLines="1">
+                        <Font family="jetbrains_mono_regular" size="16" weight="BOLD" color="#ffffb000">
+                            <Template><![CDATA[⏰ %s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
+                        </Font>
+                    </Text>
+                </PartText>
+            </Complication>
+            <Complication type="LONG_TEXT">
+                <PartText x="0" y="0" width="340" height="24">
+                    <Variant mode="AMBIENT" target="alpha" value="0" />
+                    <Text align="CENTER" maxLines="1">
+                        <Font family="jetbrains_mono_regular" size="16" weight="BOLD" color="#ffffb000">
+                            <Template><![CDATA[⏰ %s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
+                        </Font>
+                    </Text>
+                </PartText>
+            </Complication>
+            <Complication type="EMPTY" />
+        </ComplicationSlot>
+
+        <!-- Title — marquee-scrolls beneath the countdown. -->
+        <ComplicationSlot slotId="5" x="55" y="291" width="340" height="20"
+            supportedTypes="SHORT_TEXT LONG_TEXT EMPTY">
+            <BoundingOval x="0" y="0" width="340" height="20" />
+            <DefaultProviderPolicy
+                primaryProvider="com.mythara.debug/com.mythara.wear.complications.ReminderTitleComplicationService"
+                primaryProviderType="LONG_TEXT"
+                defaultSystemProvider="WATCH_BATTERY"
+                defaultSystemProviderType="SHORT_TEXT" />
+            <Complication type="SHORT_TEXT">
+                <PartText x="0" y="0" width="900" height="20">
+                    <Variant mode="AMBIENT" target="alpha" value="0" />
+                    <Transform target="x" value="0 - (([SECOND] * 8) % 700)" />
+                    <Text align="START" maxLines="1">
+                        <Font family="jetbrains_mono_regular" size="13" color="#ffffb000">
+                            <Template><![CDATA[%s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
+                        </Font>
+                    </Text>
+                </PartText>
+            </Complication>
+            <Complication type="LONG_TEXT">
+                <PartText x="0" y="0" width="900" height="20">
+                    <Variant mode="AMBIENT" target="alpha" value="0" />
+                    <Transform target="x" value="0 - (([SECOND] * 8) % 700)" />
+                    <Text align="START" maxLines="1">
+                        <Font family="jetbrains_mono_regular" size="13" color="#ffffb000">
+                            <Template><![CDATA[%s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
+                        </Font>
+                    </Text>
+                </PartText>
+            </Complication>
+            <Complication type="EMPTY" />
+        </ComplicationSlot>
+
+        <!-- AOD-ONLY full wrap. Hidden in active, shown in ambient.
+             Uses the combined ReminderComplicationService text
+             ("in 14 min - title") so AOD shows everything on one
+             surface. Tall slot (h=120) so a long reminder wraps to
+             multiple centered lines instead of getting clipped. -->
+        <ComplicationSlot slotId="6" x="10" y="260" width="430" height="120"
+            supportedTypes="SHORT_TEXT LONG_TEXT EMPTY">
+            <BoundingOval x="0" y="0" width="430" height="120" />
             <DefaultProviderPolicy
                 primaryProvider="com.mythara.debug/com.mythara.wear.complications.ReminderComplicationService"
                 primaryProviderType="LONG_TEXT"
                 defaultSystemProvider="WATCH_BATTERY"
                 defaultSystemProviderType="SHORT_TEXT" />
             <Complication type="SHORT_TEXT">
-                <!-- Interactive: marquee scroll. -->
-                <PartText x="0" y="0" width="900" height="28">
-                    <Variant mode="AMBIENT" target="alpha" value="0" />
-                    <Transform target="x" value="0 - (([SECOND] * 8) % 700)" />
-                    <Text align="START" maxLines="1">
-                        <Font family="jetbrains_mono_regular" size="15" weight="BOLD" color="#ffffb000">
-                            <Template><![CDATA[⏰ %s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
-                        </Font>
-                    </Text>
-                </PartText>
-                <!-- AOD: static, centered, end-ellipsis. Same reminder
-                     text the watch's ReminderComplicationService is
-                     pushing — formatted "In Nm - title" — just truncated
-                     to fit the slot width without animation. Smaller
-                     dimmer font for AOD burn-in / battery. -->
-                <PartText x="0" y="0" width="340" height="100" alpha="0">
+                <PartText x="0" y="0" width="430" height="120" alpha="0">
                     <Variant mode="AMBIENT" target="alpha" value="255" />
-                    <Text align="CENTER" maxLines="3">
+                    <Text align="CENTER" maxLines="6">
                         <Font family="jetbrains_mono_regular" size="13" weight="BOLD" color="#ffffb000">
                             <Template><![CDATA[⏰ %s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
                         </Font>
@@ -427,18 +490,9 @@
                 </PartText>
             </Complication>
             <Complication type="LONG_TEXT">
-                <PartText x="0" y="0" width="900" height="28">
-                    <Variant mode="AMBIENT" target="alpha" value="0" />
-                    <Transform target="x" value="0 - (([SECOND] * 8) % 700)" />
-                    <Text align="START" maxLines="1">
-                        <Font family="jetbrains_mono_regular" size="15" weight="BOLD" color="#ffffb000">
-                            <Template><![CDATA[⏰ %s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
-                        </Font>
-                    </Text>
-                </PartText>
-                <PartText x="0" y="0" width="340" height="100" alpha="0">
+                <PartText x="0" y="0" width="430" height="120" alpha="0">
                     <Variant mode="AMBIENT" target="alpha" value="255" />
-                    <Text align="CENTER" maxLines="3">
+                    <Text align="CENTER" maxLines="6">
                         <Font family="jetbrains_mono_regular" size="13" weight="BOLD" color="#ffffb000">
                             <Template><![CDATA[⏰ %s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
                         </Font>

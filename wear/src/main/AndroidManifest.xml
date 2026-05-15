@@ -149,6 +149,50 @@
                 android:value="60" />
         </service>
 
+        <!-- Reminder COUNTDOWN-only — exposes just the "in 14 min"
+             relative-time string for the next upcoming reminder. The
+             Tactical face's reminder area uses this for the bold
+             always-visible top line, with the title rendered below
+             via [ReminderTitleComplicationService]. -->
+        <service
+            android:name=".complications.ReminderCountdownComplicationService"
+            android:exported="true"
+            android:icon="@android:drawable/ic_menu_recent_history"
+            android:label="Mythara Reminder Countdown"
+            android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
+            <intent-filter>
+                <action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" />
+            </intent-filter>
+            <meta-data
+                android:name="android.support.wearable.complications.SUPPORTED_TYPES"
+                android:value="SHORT_TEXT,LONG_TEXT" />
+            <!-- Same per-minute self-refresh as the combined service. -->
+            <meta-data
+                android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS"
+                android:value="60" />
+        </service>
+
+        <!-- Reminder TITLE-only — exposes just the title of the next
+             upcoming reminder. Paired with the countdown service. -->
+        <service
+            android:name=".complications.ReminderTitleComplicationService"
+            android:exported="true"
+            android:icon="@android:drawable/ic_menu_recent_history"
+            android:label="Mythara Reminder Title"
+            android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
+            <intent-filter>
+                <action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" />
+            </intent-filter>
+            <meta-data
+                android:name="android.support.wearable.complications.SUPPORTED_TYPES"
+                android:value="SHORT_TEXT,LONG_TEXT" />
+            <!-- Title doesn't change between phone pushes — refresh
+                 only when the phone notifies, no periodic poll. -->
+            <meta-data
+                android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS"
+                android:value="0" />
+        </service>
+
         <!-- Watch-side Data Layer receiver — phone-pushed agent messages
              + phone battery (path prefix covers both /mythara/* paths). -->
         <service

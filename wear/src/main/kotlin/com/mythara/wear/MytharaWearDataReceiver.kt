@@ -93,6 +93,8 @@ class MytharaWearDataReceiver : WearableListenerService() {
                 val changed = raw.isNotBlank() && raw != previous
                 ClusterDataStore.saveReminder(this, raw)
                 requestUpdate(ReminderComplicationService::class.java)
+                requestUpdate(com.mythara.wear.complications.ReminderCountdownComplicationService::class.java)
+                requestUpdate(com.mythara.wear.complications.ReminderTitleComplicationService::class.java)
                 if (changed) playNotificationTone()
             }
 
