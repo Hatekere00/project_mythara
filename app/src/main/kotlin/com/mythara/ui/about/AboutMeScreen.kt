@@ -35,7 +35,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
+import androidx.health.connect.client.permission.HealthPermission
+import androidx.health.connect.client.records.HeartRateRecord
+import androidx.health.connect.client.request.ReadRecordsRequest
+import androidx.health.connect.client.time.TimeRangeFilter
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -54,11 +59,15 @@ import com.mythara.ui.theme.MytharaColors
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.Instant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -144,6 +153,14 @@ class AboutMeViewModel @Inject constructor(
         val deviceSensors: String? = null,
         val knownFacts: List<String> = emptyList(),
         val vaultTotal: Int = 0,
+        /** Live HR — most recent sample read directly from Health
+         *  Connect, refreshed every [LIVE_HR_POLL_MS] while the
+         *  About-Me screen is alive. Null until the first read
+         *  succeeds (or stays null if HC has no recent data). */
+        val liveHrBpm: Int? = null,
+        /** Epoch ms timestamp of [liveHrBpm], for the "as of <when>"
+         *  caption. */
+        val liveHrTsMs: Long? = null,
     )
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -152,6 +169,51 @@ class AboutMeViewModel @Inject constructor(
 
     init {
         refresh()
+        startLiveHrPolling()
+    }
+
+    /** Background loop that reads the latest HR sample from Health
+     *  Connect every [LIVE_HR_POLL_MS] and pushes it onto [Ui.liveHrBpm].
+     *  Works alongside the (session-scoped) ResonanceHcHrPoller; both
+     *  read the same HC data, but this one runs whenever the About-Me
+     *  screen is open. Quietly no-ops when HC isn't available or HR
+     *  read permission isn't granted — same gating as the rest of the
+     *  health section. */
+    private fun startLiveHrPolling() {
+        viewModelScope.launch {
+            while (isActive) {
+                runCatching { readLatestHrFromHc() }
+                    .getOrNull()
+                    ?.let { (bpm, tsMs) ->
+                        _ui.update { it.copy(liveHrBpm = bpm, liveHrTsMs = tsMs) }
+                    }
+                delay(LIVE_HR_POLL_MS)
+            }
+        }
+    }
+
+    private suspend fun readLatestHrFromHc(): Pair<Int, Long>? {
+        return withContext(Dispatchers.IO) {
+            if (HealthConnectClient.getSdkStatus(appContext) != HealthConnectClient.SDK_AVAILABLE) {
+                return@withContext null
+            }
+            val client = HealthConnectClient.getOrCreate(appContext)
+            val granted = client.permissionController.getGrantedPermissions()
+            if (HealthPermission.getReadPermission(HeartRateRecord::class) !in granted) {
+                return@withContext null
+            }
+            val now = Instant.now()
+            val since = now.minusSeconds(LIVE_HR_LOOKBACK_SEC)
+            val records = runCatching {
+                client.readRecords(
+                    ReadRecordsRequest(HeartRateRecord::class, TimeRangeFilter.between(since, now)),
+                ).records
+            }.getOrNull() ?: return@withContext null
+            val latest = records.flatMap { rec ->
+                rec.samples.map { s -> s.time.toEpochMilli() to s.beatsPerMinute.toInt() }
+            }.maxByOrNull { it.first } ?: return@withContext null
+            latest.second to latest.first
+        }
     }
 
     fun refresh() {
@@ -438,6 +500,20 @@ class AboutMeViewModel @Inject constructor(
 
     private fun shortDate(ms: Long): String =
         SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(ms))
+
+    companion object {
+        /** How often to re-read HC for the live HR readout. The
+         *  upstream sources (Fitbit, Samsung Health) batch their
+         *  writes every ~1 min, so polling much faster than this
+         *  just spins for no new data. */
+        private const val LIVE_HR_POLL_MS = 30_000L
+
+        /** How far back to scan for the latest HC sample. Wide
+         *  enough to catch a Samsung-Health-batched write that
+         *  arrived a few minutes ago without confusing genuinely
+         *  stale readings for live ones. */
+        private const val LIVE_HR_LOOKBACK_SEC = 600L
+    }
 }
 
 @Composable
@@ -601,16 +677,33 @@ fun AboutMeScreen(
                 Spacer(Modifier.height(8.dp))
             }
 
+            // Live HR — read directly from Health Connect every ~30 s
+            // by the VM. Shown above the rolling-stats card so the
+            // user always has a current bpm at a glance, even when
+            // no Resonance session is active.
+            if (ui.liveHrBpm != null) {
+                Stat("Heart rate (live)", "${ui.liveHrBpm} bpm")
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "as of ${shortRelative(ui.liveHrTsMs)}",
+                    color = MytharaColors.FgDim, style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(10.dp))
+            }
+
             val hr = ui.hrFromWatch
             if (hr != null) {
-                Stat("Heart rate (watch)", "${hr.latestBpm ?: "–"} bpm")
+                Stat("Heart rate (rolling)", "${hr.latestBpm ?: "–"} bpm")
                 Spacer(Modifier.height(4.dp))
                 Text(
                     "avg ${hr.avgBpm ?: "–"} · range ${hr.minBpm ?: "–"}–${hr.maxBpm ?: "–"} · ${hr.count} samples",
                     color = MytharaColors.FgDim, style = MaterialTheme.typography.bodySmall,
                 )
-            } else {
-                Empty("No watch heart-rate samples yet — open the watch app to start the 3-minute HR capture.")
+            } else if (ui.liveHrBpm == null) {
+                // Only show the "no samples" empty-state when neither
+                // live nor rolling has anything — having only live is
+                // a perfectly normal early-state.
+                Empty("No watch heart-rate samples yet — wear the watch and make sure Samsung Health / Fitbit is sharing HR with Health Connect.")
             }
             ui.healthSnapshot?.let {
                 Spacer(Modifier.height(10.dp))
@@ -811,4 +904,23 @@ private fun Big5Row(label: String, value: Double) {
 @Composable
 private fun Empty(text: String) {
     Text(text, color = MytharaColors.FgDim, style = MaterialTheme.typography.bodySmall)
+}
+
+/** Compact "5 s ago / 12 m ago / 3 h ago / Mar 4, 2:15 PM" formatter
+ *  for the live-HR caption. Falls back to "—" on null. */
+private fun shortRelative(ms: Long?): String {
+    if (ms == null) return "—"
+    val ageMs = (System.currentTimeMillis() - ms).coerceAtLeast(0)
+    val s = ageMs / 1000
+    val m = s / 60
+    val h = m / 60
+    val d = h / 24
+    return when {
+        s < 5 -> "just now"
+        s < 60 -> "${s}s ago"
+        m < 60 -> "${m}m ago"
+        h < 24 -> "${h}h ago"
+        d < 7 -> "${d}d ago"
+        else -> SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(ms))
+    }
 }
