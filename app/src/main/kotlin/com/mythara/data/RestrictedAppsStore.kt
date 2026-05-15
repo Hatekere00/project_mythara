@@ -51,13 +51,19 @@ class RestrictedAppsStore @Inject constructor(
 
     private val keyBlockedExtras = stringSetPreferencesKey("blocked.extra")
     private val keyCriticalExtras = stringSetPreferencesKey("critical.extra")
+    // Packages the user explicitly "always allowed" off a critical-action
+    // prompt — subtracted from the effective critical list even when they
+    // are a built-in CRITICAL_DEFAULT. This is what makes "always allow"
+    // actually de-list a default app, not just a user-added one.
+    private val keyCriticalSuppressed = stringSetPreferencesKey("critical.suppressed")
 
     fun blockedFlow(): Flow<Set<String>> = ctx.dataStore.data.map { prefs ->
         BLOCKED_DEFAULTS + (prefs[keyBlockedExtras] ?: emptySet())
     }
 
     fun criticalFlow(): Flow<Set<String>> = ctx.dataStore.data.map { prefs ->
-        CRITICAL_DEFAULTS + (prefs[keyCriticalExtras] ?: emptySet())
+        (CRITICAL_DEFAULTS + (prefs[keyCriticalExtras] ?: emptySet())) -
+            (prefs[keyCriticalSuppressed] ?: emptySet())
     }
 
     fun blockedExtrasFlow(): Flow<Set<String>> =
@@ -65,6 +71,10 @@ class RestrictedAppsStore @Inject constructor(
 
     fun criticalExtrasFlow(): Flow<Set<String>> =
         ctx.dataStore.data.map { it[keyCriticalExtras] ?: emptySet() }
+
+    /** Packages the user "always allowed" — de-listed from critical. */
+    fun criticalSuppressedFlow(): Flow<Set<String>> =
+        ctx.dataStore.data.map { it[keyCriticalSuppressed] ?: emptySet() }
 
     suspend fun isBlocked(pkg: String): Boolean {
         if (pkg.isBlank()) return false
@@ -96,15 +106,24 @@ class RestrictedAppsStore @Inject constructor(
         val p = pkg.trim()
         if (p.isBlank()) return
         ctx.dataStore.edit { prefs ->
-            val cur = prefs[keyCriticalExtras] ?: emptySet()
-            prefs[keyCriticalExtras] = cur + p
+            prefs[keyCriticalExtras] = (prefs[keyCriticalExtras] ?: emptySet()) + p
+            // Re-adding clears any prior "always allow" suppression.
+            prefs[keyCriticalSuppressed] = (prefs[keyCriticalSuppressed] ?: emptySet()) - p
         }
     }
 
+    /**
+     * De-list [pkg] from the critical-actions list — drops it from the
+     * user-added extras AND adds it to the suppression set, so a
+     * built-in CRITICAL_DEFAULT also stops gating. Backs the
+     * "always allow this" choice on the critical-action prompt.
+     */
     suspend fun removeCritical(pkg: String) {
+        val p = pkg.trim()
+        if (p.isBlank()) return
         ctx.dataStore.edit { prefs ->
-            val cur = prefs[keyCriticalExtras] ?: emptySet()
-            prefs[keyCriticalExtras] = cur - pkg
+            prefs[keyCriticalExtras] = (prefs[keyCriticalExtras] ?: emptySet()) - p
+            prefs[keyCriticalSuppressed] = (prefs[keyCriticalSuppressed] ?: emptySet()) + p
         }
     }
 

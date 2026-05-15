@@ -87,7 +87,10 @@ fun ConfirmationDialog(
                 )
             }
 
-            if (request.allowlistKey != null) {
+            // Show the "always allow" toggle for per-call allowlist
+            // prompts AND for critical-action prompts — the latter
+            // de-lists the app from the critical list entirely.
+            if (request.allowlistKey != null || request.criticalPkg != null) {
                 Spacer(Modifier.height(14.dp))
                 Row(
                     modifier = Modifier
@@ -103,7 +106,11 @@ fun ConfirmationDialog(
                     )
                     Spacer(Modifier.padding(end = 8.dp))
                     Text(
-                        text = "always allow this",
+                        text = if (request.criticalPkg != null) {
+                            "always allow — stop treating this app as critical"
+                        } else {
+                            "always allow this"
+                        },
                         color = MytharaColors.FgDim,
                         style = MaterialTheme.typography.bodyMedium,
                     )

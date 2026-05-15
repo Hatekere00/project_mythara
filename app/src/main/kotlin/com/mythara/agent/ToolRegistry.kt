@@ -232,11 +232,14 @@ class ToolRegistry @Inject constructor(
                     id = gate.newId(tool.name),
                     toolName = tool.name,
                     title = "Critical action — ${verdict.pkg}?",
-                    body = verdict.reason + " Tap allow to proceed once, deny to cancel.",
-                    // No allowlistKey — by design, the user CAN'T
-                    // pre-authorise these. Every critical action gets
-                    // a fresh prompt.
+                    body = verdict.reason +
+                        " Tap allow to proceed once, deny to cancel — or tick " +
+                        "\"always allow\" to stop treating this app as critical.",
+                    // No allowlistKey — the per-call allowlist doesn't
+                    // apply here. Instead criticalPkg lets the UI offer
+                    // an "always allow" that de-lists the whole app.
                     allowlistKey = null,
+                    criticalPkg = verdict.pkg,
                 )
                 val decision = gate.request(req)
                 if (decision == ConfirmationGate.Decision.Deny) {

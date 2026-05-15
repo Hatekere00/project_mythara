@@ -60,6 +60,14 @@ class ConfirmationGate @Inject constructor() {
          * means single-shot only (e.g. one-time payment).
          */
         val allowlistKey: String? = null,
+        /**
+         * Set when this prompt is a critical-action gate for a specific
+         * app package (ride-hailing, e-commerce, …). When non-null the
+         * UI also shows the "always allow" toggle — ticking it calls
+         * [com.mythara.data.RestrictedAppsStore.removeCritical] so the
+         * app is de-listed from critical and never prompts again.
+         */
+        val criticalPkg: String? = null,
     )
 
     private val _pending = MutableSharedFlow<ConfirmRequest>(

@@ -44,6 +44,7 @@ class ChatViewModel @Inject constructor(
     val voiceActions: com.mythara.voice.VoiceActionStore,
     val confirmationGate: com.mythara.agent.ConfirmationGate,
     private val allowlist: com.mythara.data.AllowlistStore,
+    private val restrictedApps: com.mythara.data.RestrictedAppsStore,
     @dagger.hilt.android.qualifiers.ApplicationContext private val appCtx: android.content.Context,
     private val deviceIdStore: com.mythara.memory.DeviceIdStore,
     private val lifelineRepo: com.mythara.lifeline.LifelineRepository,
@@ -504,19 +505,26 @@ class ChatViewModel @Inject constructor(
     /**
      * Resolve a pending ConfirmationGate prompt. Called by
      * [ConfirmationDialog] when the user taps Allow / Deny.
-     * Persists the allowlist entry asynchronously when
-     * [alwaysAllow] is true; the gate itself is freed immediately.
+     *
+     * When [alwaysAllow] is ticked on an Allow:
+     *  - per-call prompts (allowlistKey set) → persist the allowlist
+     *    entry so the same key skips the prompt next time;
+     *  - critical-action prompts (criticalPkg set) → de-list the app
+     *    from the critical-actions list entirely, so it stops gating.
+     * Either way the gate itself is freed immediately.
      */
     fun resolveConfirmation(
         request: com.mythara.agent.ConfirmationGate.ConfirmRequest,
         decision: com.mythara.agent.ConfirmationGate.Decision,
         alwaysAllow: Boolean,
     ) {
-        if (alwaysAllow &&
-            decision == com.mythara.agent.ConfirmationGate.Decision.Allow &&
-            request.allowlistKey != null
-        ) {
-            viewModelScope.launch { allowlist.allow(request.allowlistKey) }
+        if (alwaysAllow && decision == com.mythara.agent.ConfirmationGate.Decision.Allow) {
+            request.allowlistKey?.let { key ->
+                viewModelScope.launch { allowlist.allow(key) }
+            }
+            request.criticalPkg?.let { pkg ->
+                viewModelScope.launch { restrictedApps.removeCritical(pkg) }
+            }
         }
         confirmationGate.resolve(request.id, decision)
     }
