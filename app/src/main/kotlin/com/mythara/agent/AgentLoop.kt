@@ -47,6 +47,12 @@ class AgentLoop @Inject constructor(
     private val userNameStore: com.mythara.data.UserNameStore,
     private val contactProfiles: com.mythara.analytics.ContactProfileRepository,
     private val deviceIdStore: com.mythara.memory.DeviceIdStore,
+    /** Detects multi-step automation chains in the current turn and
+     *  queues an explicit "offer to save as a skill" system message
+     *  for the NEXT turn. The static SKILLS section in the system
+     *  prompt rarely fires the offer on its own; this deterministic
+     *  hook is more reliable. */
+    private val skillSuggestions: SkillSuggestionStore,
 ) {
 
     /** Cached on first read — DeviceIdStore is a stable per-install
@@ -186,6 +192,29 @@ class AgentLoop @Inject constructor(
         }.getOrNull()?.let { rendered ->
             android.util.Log.d(TAG, "injecting live persona context (${rendered.length} chars)")
             ChatMessage(role = "system", content = rendered)
+        }
+
+        // Skill-save offer prompt — when the previous turn chained
+        // 3+ automation tools, the SkillSuggestionStore stashed the
+        // tool list so this turn can deterministically tell the model
+        // "offer to save this as a skill". One-shot: store.consume()
+        // clears the stash so we don't loop.
+        val skillOfferSystem: ChatMessage? = skillSuggestions.consume()?.let { chain ->
+            android.util.Log.d(TAG, "injecting skill-save offer for chain: $chain")
+            ChatMessage(
+                role = "system",
+                content =
+                    "SKILL-SAVE MOMENT — your previous turn chained these automation tools in order: " +
+                        chain.joinToString(" → ") +
+                        ". This reads as a reusable procedure the user might want to run again. " +
+                        "At the END of your normal reply this turn, append a SHORT follow-up offer " +
+                        "(in the same message, not a new turn) — e.g. \"want me to save this as a skill " +
+                        "so you can run it next time?\" Word count exception: this offer is on top of the " +
+                        "usual 1–2 sentence budget. " +
+                        "If the user agrees in a future turn, call save_skill with a clear name + the " +
+                        "exact steps + a short description. If you've already offered this in a recent " +
+                        "turn and the user demurred, skip the offer (don't nag).",
+            )
         }
         // Final mood for downstream prosody (TTS pitch/rate, EL voice
         // settings). currentMood wins when present.
@@ -570,6 +599,7 @@ class AgentLoop @Inject constructor(
                 if (ttsSystem != null) add(ttsSystem)
                 if (moodSystem != null) add(moodSystem)
                 if (livePersonaSystem != null) add(livePersonaSystem)
+                if (skillOfferSystem != null) add(skillOfferSystem)
                 if (autoReplySystem != null) add(autoReplySystem)
                 if (autoTriageSystem != null) add(autoTriageSystem)
                 if (notifSystem != null) add(notifSystem)
@@ -645,6 +675,9 @@ class AgentLoop @Inject constructor(
                 userText.startsWith(AutoReplyDispatcher.AUTO_TRIAGE_PREFIX)
             if (toolCalls.isEmpty() || !toolFinish) {
                 if (isAutoReplyTurn) returnToMythara()
+                // Turn is wrapping — record any multi-step automation
+                // chain for the SKILLS offer on the next turn.
+                skillSuggestions.maybeMarkForOffer()
                 emit(Turn.Finished(lastAssistantText, iterations = iter, userMoodTrend = effectiveMood))
                 return@flow
             }
@@ -673,6 +706,7 @@ class AgentLoop @Inject constructor(
                     registry.execute(call.function.name, call.function.arguments)
                 }
                 val dt = (System.nanoTime() - t0) / 1_000_000
+                if (result.ok) skillSuggestions.recordTool(call.function.name)
                 history.dao.insert(
                     MessageRow(
                         tsMillis = System.currentTimeMillis(),
@@ -694,6 +728,7 @@ class AgentLoop @Inject constructor(
         if (userText.startsWith(AutoReplyDispatcher.AUTO_REPLY_PREFIX) ||
             userText.startsWith(AutoReplyDispatcher.AUTO_TRIAGE_PREFIX)
         ) returnToMythara()
+        skillSuggestions.maybeMarkForOffer()
         emit(Turn.Finished(lastAssistantText + " [hit max iterations]", iterations = iter, userMoodTrend = effectiveMood))
     }
 
