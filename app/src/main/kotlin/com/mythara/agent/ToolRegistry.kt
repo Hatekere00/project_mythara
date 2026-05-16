@@ -117,6 +117,8 @@ class ToolRegistry @Inject constructor(
     searchPhotosTool: com.mythara.agent.tools.SearchPhotosTool,
     // Phase H — long-term memory introspection.
     searchMemoryTool: com.mythara.agent.tools.SearchMemoryTool,
+    // Phase I — day-in-review aggregator.
+    dailyDigestTool: com.mythara.agent.tools.DailyDigestTool,
     private val mcpRegistry: com.mythara.mcp.McpRegistry,
     private val gate: ConfirmationGate,
     private val allowlist: com.mythara.data.AllowlistStore,
@@ -188,6 +190,7 @@ class ToolRegistry @Inject constructor(
         screenshotTool,
         searchPhotosTool,
         searchMemoryTool,
+        dailyDigestTool,
     )
 
     /** Native + currently-known MCP tools, merged. Recomputed on every
