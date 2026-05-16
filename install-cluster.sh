@@ -45,8 +45,27 @@ for dev in $("$ADB" devices | awk 'NR>1 && $2=="device" {print $1}'); do
     else
         echo "==> $dev (phone): installing :app"
         "$ADB" -s "$dev" install -r "$APP_APK"
+        # Auto-apply the Mythara wallpaper to home + lock. Uses the
+        # in-app WallpaperApplyReceiver's `target=static` mode — it
+        # renders one frame of the live wallpaper (posture-adaptive)
+        # to a bitmap and applies it via WallpaperManager.setBitmap
+        # for both FLAG_SYSTEM and FLAG_LOCK. No user interaction
+        # required. The renderer auto-detects fold-inner displays and
+        # picks the FoldInner static-layer bake.
+        echo "==> $dev (phone): applying Mythara wallpaper (home + lock)"
+        "$ADB" -s "$dev" shell am broadcast \
+            -a com.mythara.action.APPLY_WALLPAPER \
+            -n com.mythara.debug/com.mythara.services.WallpaperApplyReceiver \
+            --es target static >/dev/null
     fi
 done
 
 [[ "$found" -eq 1 ]] || { echo "!! no adb devices connected"; exit 1; }
 echo "==> Done."
+echo
+echo "Tip: to upgrade home from static → animated live wallpaper, run:"
+echo "  adb -s <serial> shell am broadcast \\"
+echo "    -a com.mythara.action.APPLY_WALLPAPER \\"
+echo "    -n com.mythara.debug/com.mythara.services.WallpaperApplyReceiver \\"
+echo "    --es target live"
+echo "and tap 'Set wallpaper' once in the picker that opens."

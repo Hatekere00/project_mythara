@@ -5,10 +5,13 @@ import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.net.Uri
 import android.util.Log
 import com.mythara.branding.MytharaLiveWallpaperService
+import com.mythara.branding.WallpaperRenderer
 import java.io.File
 
 /**
@@ -49,6 +52,23 @@ class WallpaperApplyReceiver : BroadcastReceiver() {
         // "Set wallpaper" once. `path` extra is ignored in this mode.
         if (targetArg == "live") {
             launchLiveWallpaperPicker(context)
+            return
+        }
+
+        // Auto-apply: render one frame of the live wallpaper (posture-
+        // adaptive — picks the FoldInner bake on a squarish display,
+        // CompactPortrait elsewhere) and set it as the home + lock
+        // wallpaper without any user interaction. This is what
+        // install-cluster.sh fires after every APK install so the user
+        // doesn't have to manually pick the wallpaper after a deploy.
+        // The renderer's full composition (gradient + static layers +
+        // neurons + rose) is included — a single frame at tMs=0
+        // captures the rose at rotation=0 and the hex/neurons at
+        // pulse peak, which makes a nice "key art" still.
+        // Optional `target=static` with `--es lock_only true` applies
+        // to lock only (kept for parity with the future Settings UI).
+        if (targetArg == "static") {
+            applyStaticSnapshot(context, intent)
             return
         }
 
@@ -148,6 +168,56 @@ class WallpaperApplyReceiver : BroadcastReceiver() {
     }
 
     /**
+     * Render one frame of the live wallpaper into a Bitmap and apply
+     * it via WallpaperManager.setBitmap. Posture is auto-detected by
+     * the renderer from the surface (display) dimensions, so the
+     * Pixel 9 Pro Fold gets the FoldInner bake when its inner display
+     * is active, the cover gets the CompactPortrait bake, every other
+     * phone gets CompactPortrait.
+     *
+     * Why "static snapshot" instead of just calling setLiveWallpaper:
+     * setting an arbitrary live wallpaper component requires the
+     * signature permission SET_WALLPAPER_COMPONENT which sideloaded
+     * debug builds don't have. This bypass gets the user a branded
+     * Mythara wallpaper applied to home + lock automatically; if they
+     * want the animated version they tap once on the picker that
+     * `target=live` opens.
+     */
+    private fun applyStaticSnapshot(context: Context, intent: Intent) {
+        runCatching {
+            val dm = context.resources.displayMetrics
+            val w = dm.widthPixels
+            val h = dm.heightPixels
+            if (w <= 0 || h <= 0) {
+                Log.w(TAG, "applyStaticSnapshot: invalid display metrics ${w}x${h}")
+                return
+            }
+            val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            val renderer = WallpaperRenderer(context)
+            renderer.setSize(w, h)
+            // tMs=0 picks rose-rotation=0 and pulse-peak. Good "key art"
+            // composition without arbitrary motion artifacts in the
+            // single still frame.
+            renderer.render(canvas, 0L)
+            renderer.release()
+
+            val lockOnly = intent.getBooleanExtra(EXTRA_LOCK_ONLY, false)
+            val whichFlags = if (lockOnly) {
+                WallpaperManager.FLAG_LOCK
+            } else {
+                WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK
+            }
+            val wm = WallpaperManager.getInstance(context)
+            wm.setBitmap(bitmap, null, true, whichFlags)
+            Log.i(TAG, "static snapshot applied (${w}x${h}, lockOnly=$lockOnly)")
+            bitmap.recycle()
+        }.onFailure {
+            Log.e(TAG, "applyStaticSnapshot failed: ${it.message}", it)
+        }
+    }
+
+    /**
      * Launch the system live-wallpaper preview pre-loaded with our
      * MytharaLiveWallpaperService component. The user taps "Set
      * wallpaper" in the preview to actually apply.
@@ -192,5 +262,10 @@ class WallpaperApplyReceiver : BroadcastReceiver() {
          *  "centre on the rose". */
         const val EXTRA_ORIGIN_X = "ox"
         const val EXTRA_ORIGIN_Y = "oy"
+
+        /** `--ez lock_only true` (combined with `--es target static`) —
+         *  apply the static snapshot to the lockscreen only, leaving
+         *  the home wallpaper untouched. Default false = both. */
+        const val EXTRA_LOCK_ONLY = "lock_only"
     }
 }

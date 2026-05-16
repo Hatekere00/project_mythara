@@ -54,6 +54,35 @@ class WallpaperRenderer(private val ctx: Context) {
     private var staticBitmap: Bitmap? = null
     private val staticSrcRect = Rect()
     private val staticDstRect = Rect()
+    private var posture: Posture = Posture.CompactPortrait
+
+    /** Physical-layout buckets the renderer adapts to. Detected purely
+     *  from the wallpaper surface dimensions in [setSize] — no
+     *  WindowInfoTracker / Activity is required (this is a Service).
+     *  The single live wallpaper service then ships as one entry in
+     *  the system picker and reflows when the user opens / closes
+     *  their Fold, when they rotate, or when the surface comes back
+     *  with different dimensions for any other reason. */
+    enum class Posture {
+        /** Standard tall portrait phone (Pixel 10 Pro, P9 Fold cover). */
+        CompactPortrait,
+        /** Fold inner display — closer to square (~1:1.04). Rose
+         *  centred, neurons spread wider, dedicated baked layer. */
+        FoldInner,
+    }
+
+    private fun detectPosture(width: Int, height: Int): Posture {
+        if (width == 0 || height == 0) return Posture.CompactPortrait
+        val ratio = width.toFloat() / height.toFloat()
+        // Pixel 9 Pro Fold inner is ~2076×2152 → ratio ~0.96. Cover and
+        // standard phones are ~0.45 (1080/2424). Use 0.78 as the
+        // threshold — well below any normal phone aspect, well above
+        // the squarest fold inner display we'd ever encounter. The
+        // landscape rotation of a phone also lands above 1.0; we treat
+        // that the same as FoldInner since the squarish layout works
+        // there too (rose centred on a wide canvas).
+        return if (ratio >= 0.78f) Posture.FoldInner else Posture.CompactPortrait
+    }
 
     // Brighter "active neuron" overlay nodes — generated once per
     // surface size, animated via simple lissajous drift each frame.
@@ -107,11 +136,15 @@ class WallpaperRenderer(private val ctx: Context) {
      * no-ops, so it's safe to invoke on every surface event.
      */
     fun setSize(width: Int, height: Int) {
-        if (width == w && height == h && staticBitmap != null) return
+        val nextPosture = detectPosture(width, height)
+        val postureChanged = nextPosture != posture
+        if (width == w && height == h && staticBitmap != null && !postureChanged) return
         w = width
         h = height
+        posture = nextPosture
+        Log.d(TAG, "setSize: ${w}x${h} → posture=$posture")
         loadStaticLayers()
-        neurons = generateNeurons(w, h)
+        neurons = generateNeurons(w, h, posture)
     }
 
     /** Lay out N drifting "active neuron" nodes scattered across the
@@ -121,10 +154,21 @@ class WallpaperRenderer(private val ctx: Context) {
      *  one near my clock" — they should keep finding it there).
      *  Drift periods are deliberately long (8-22 s) so the motion
      *  reads as ambient atmosphere, not a screensaver. */
-    private fun generateNeurons(width: Int, height: Int): List<Neuron> {
+    private fun generateNeurons(width: Int, height: Int, posture: Posture): List<Neuron> {
         val rng = Random(0xC0FFEE)
-        val ampScale = width / 1280f   // keep amplitudes proportional
-        return List(NEURON_COUNT) {
+        // Use the smaller dimension as the scale anchor so a wide
+        // fold-inner canvas doesn't make individual neurons absurdly
+        // big — keeps perceived neuron radius constant across
+        // postures while the COUNT scales to keep density similar.
+        val ampScale = kotlin.math.min(width, height) / 1280f
+        val count = when (posture) {
+            // FoldInner has ~70% more pixels than a portrait phone, so
+            // upscale neuron count to keep visual density similar
+            // (otherwise the inner display looks sparse).
+            Posture.FoldInner -> (NEURON_COUNT * 1.7f).toInt()
+            else -> NEURON_COUNT
+        }
+        return List(count) {
             Neuron(
                 baseX = rng.nextFloat() * width,
                 baseY = rng.nextFloat() * height,
@@ -138,6 +182,9 @@ class WallpaperRenderer(private val ctx: Context) {
     }
 
     private fun loadStaticLayers() {
+        // Drop any previously-decoded bitmap before swapping (e.g. on
+        // posture change) — otherwise the old ~14 MB stays pinned.
+        staticBitmap?.recycle()
         // Decode at native pixel size. ARGB_8888 is overkill for an
         // opaque wallpaper but it lets the canvas blit hit the GPU's
         // fast path on most devices. Memory cost ≈ w*h*4 bytes
@@ -146,8 +193,17 @@ class WallpaperRenderer(private val ctx: Context) {
             inPreferredConfig = Bitmap.Config.ARGB_8888
             inScaled = false
         }
+        // Pick the bake whose source aspect ratio best matches the
+        // current surface. The FoldInner bake (~2076×2152) reflows the
+        // mesh / wordmark / silhouette around a squarish canvas; the
+        // CompactPortrait bake (~1280×2856) is the original tall
+        // portrait design.
+        val resId = when (posture) {
+            Posture.FoldInner -> R.drawable.wallpaper_static_layers_inner
+            Posture.CompactPortrait -> R.drawable.wallpaper_static_layers
+        }
         val bmp = runCatching {
-            BitmapFactory.decodeResource(ctx.resources, R.drawable.wallpaper_static_layers, opts)
+            BitmapFactory.decodeResource(ctx.resources, resId, opts)
         }.getOrNull()
         staticBitmap = bmp
         if (bmp != null) {
@@ -252,10 +308,22 @@ class WallpaperRenderer(private val ctx: Context) {
         activeRipples.removeAll { now - it.startMs > RIPPLE_DURATION_MS }
         if (activeRipples.isEmpty()) return
 
-        // 3. Draw each. Origin sentinel -1f means "rose centre".
+        // 3. Draw each. Origin sentinel -1f means "rose centre" —
+        // matches whatever lift renderRose applies for the current
+        // posture so ripples emanate from the visible rose.
         val roseCx = w / 2f
-        val roseCy = h / 2f - 115f * (h / 2856f)
-        val maxR = w * RIPPLE_MAX_RADIUS_FRAC
+        val roseCy = when (posture) {
+            Posture.FoldInner -> h / 2f
+            Posture.CompactPortrait -> h / 2f - 115f * (h / 2856f)
+        }
+        // Ripple max radius scales off the smaller dimension on
+        // FoldInner so it doesn't escape the visible canvas in the
+        // squarer view, but stays width-based on tall portrait.
+        val rippleAnchor = when (posture) {
+            Posture.FoldInner -> kotlin.math.min(w, h).toFloat()
+            Posture.CompactPortrait -> w.toFloat()
+        }
+        val maxR = rippleAnchor * RIPPLE_MAX_RADIUS_FRAC
         for (r in activeRipples) {
             val age01 = ((now - r.startMs).toFloat() / RIPPLE_DURATION_MS).coerceIn(0f, 1f)
             val cx = if (r.originXFrac < 0f) roseCx else r.originXFrac * w
@@ -341,16 +409,27 @@ class WallpaperRenderer(private val ctx: Context) {
      */
     private fun renderRose(canvas: Canvas, tMs: Long, pulseHz: Float) {
         // Match the Python renderer's geometry exactly: source viewport
-        // 108×108, scale = 6.5 * (w / 1280) when the silhouette is
-        // present. Live wallpaper always renders the silhouette
-        // composition so we stick with the 6.5 scale.
-        val scale = 6.5f * (w / 1280f)
+        // 108×108. Scale derives from `min(w,h) / 1280f` so the rose
+        // stays visually consistent across postures (a wider fold-
+        // inner canvas would over-scale if we kept it tied to `w`).
+        // CompactPortrait keeps the original 6.5× multiplier; FoldInner
+        // drops to 4.6× because the more-square canvas reads "rose is
+        // too big" at the same multiplier.
+        val multiplier = when (posture) {
+            Posture.FoldInner -> 4.6f
+            Posture.CompactPortrait -> 6.5f
+        }
+        val scale = multiplier * (kotlin.math.min(w, h) / 1280f)
         val cx = w / 2f
-        // _wordmark_block_height() in the Python renderer ≈ 230 px at
-        // the default fonts — same metrics here since we use the
-        // same font files. cy = h/2 - 115 lifts the rose so the
-        // *combined* rose+wordmark block centres on canvas-middle.
-        val cy = h / 2f - 115f
+        // CompactPortrait: lift rose by ~115 px so the combined
+        // rose+wordmark+backronym block centres vertically.
+        // FoldInner: with the squarer baked layer the wordmark sits
+        // proportionally lower; no lift needed (true vertical centre
+        // is correct for the rose).
+        val cy = when (posture) {
+            Posture.FoldInner -> h / 2f
+            Posture.CompactPortrait -> h / 2f - 115f
+        }
 
         // Slow rotation — one full revolution every ROT_PERIOD_MS.
         val rotDeg = ((tMs % ROT_PERIOD_MS).toFloat() / ROT_PERIOD_MS) * 360f
