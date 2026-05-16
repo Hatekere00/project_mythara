@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.mythara.agent.todo.TodoMemoryPatternExtractor
 import com.mythara.ai.ModelRouter
 import com.mythara.memory.Tier
 import com.mythara.secret.observe.vault.LearningDao
@@ -68,6 +69,7 @@ class BehaviorLearningSummarizer @AssistedInject constructor(
     private val vault: LearningVault,
     private val dao: LearningDao,
     private val router: ModelRouter,
+    private val patternExtractor: TodoMemoryPatternExtractor,
 ) : CoroutineWorker(appContext, params) {
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -126,6 +128,18 @@ class BehaviorLearningSummarizer @AssistedInject constructor(
             Log.w(TAG, "vault.add(summary) failed — keeping raw rows for retry")
             return Result.retry()
         }
+
+        // 4b. Derive concrete next-action items from the summary
+        //     and queue them in AgentTodoStore for the auto-
+        //     continue loop to drain. Best-effort — if the
+        //     extractor returns 0 or fails, we still proceed
+        //     to the raw-row delete (the summary itself is the
+        //     durable artifact; the todo derivation is just a
+        //     convenience layer on top).
+        runCatching {
+            val n = patternExtractor.extract(daySummaryMd = summary, dateLabel = date)
+            if (n > 0) Log.i(TAG, "queued $n memory-pattern todo items for $date")
+        }.onFailure { Log.w(TAG, "pattern extraction threw: ${it.message}") }
 
         // 5. Delete the raw transcripts now that the summary
         //    persists. Each behaviour-event row carries

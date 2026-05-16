@@ -71,6 +71,7 @@ class AgentRunner @Inject constructor(
      *  ChatViewModel's tone-playback path observe the same flag. */
     private val musicMode: com.mythara.data.MusicModeStore,
     private val autoContinue: com.mythara.agent.todo.AgentAutoContinueController,
+    private val todoIntentExtractor: com.mythara.agent.todo.TodoIntentExtractor,
 ) {
     /**
      * Process-wide scope. SupervisorJob so one failing turn doesn't
@@ -210,6 +211,16 @@ class AgentRunner @Inject constructor(
                                 ttlMs = 4_000L,
                             )
                             deliverFinished(turn, fromNotification)
+                            // Extract any IMPLIED follow-up actions
+                            // from this exchange and queue them in
+                            // AgentTodoStore. Only run on direct
+                            // user turns — auto-continue / auto-
+                            // reply / auto-triage / notif / no-
+                            // surface turns shouldn't recursively
+                            // generate more items (would cascade
+                            // and blow past the autoContinue cap
+                            // every cycle).
+                            maybeExtractIntent(text, turn)
                         }
                         is AgentLoop.Turn.Error -> {
                             com.mythara.ui.system.DynamicIslandSink.push(
@@ -372,6 +383,35 @@ class AgentRunner @Inject constructor(
         val forDetection = if (keepAudioTags) SpokenText.forSpeech(cleaned, keepAudioTags = false) else toSpeak
         val locale = runCatching { languageDetector.identifyLocale(forDetection) }.getOrNull()
         tts.speak(toSpeak, locale, turn.userMoodTrend)
+    }
+
+    /**
+     * Run the user-intent extractor on this finished turn so any
+     * implied follow-ups land in [com.mythara.agent.todo.AgentTodoStore].
+     * Skips:
+     *   - auto-continue prompts (we'd cascade and burn the cap)
+     *   - notification-triage turns (the user didn't initiate them)
+     *   - auto-reply / auto-triage turns (same — agent-initiated)
+     *   - turns the agent declined to surface (NOSURFACE)
+     *
+     * Runs in a fire-and-forget coroutine on [scope] — the extractor
+     * uses the LIGHT model path (local Gemma) but we don't want to
+     * block Turn.Finished delivery on it.
+     */
+    private fun maybeExtractIntent(userText: String, turn: AgentLoop.Turn.Finished) {
+        if (userText.startsWith("[auto-continue]")) return
+        if (userText.startsWith(AgentLoop.NOTIF_PREFIX)) return
+        if (userText.startsWith(AutoReplyDispatcher.AUTO_REPLY_PREFIX)) return
+        if (userText.startsWith(AutoReplyDispatcher.AUTO_TRIAGE_PREFIX)) return
+        val cleaned = Thinks.strip(turn.finalText).removeSuffix(" [hit max iterations]")
+        if (isNoSurface(cleaned)) return
+        if (cleaned.isBlank()) return
+        scope.launch {
+            runCatching {
+                val n = todoIntentExtractor.extract(userText = userText, agentReply = cleaned)
+                if (n > 0) Log.d(TAG, "queued $n intent-derived todo items")
+            }.onFailure { Log.w(TAG, "intent extraction failed: ${it.message}") }
+        }
     }
 
     companion object {
