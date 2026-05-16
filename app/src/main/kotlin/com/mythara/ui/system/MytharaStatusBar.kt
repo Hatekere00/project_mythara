@@ -392,12 +392,17 @@ fun MytharaStatusBar(
                 )
             }
 
-            // MIDDLE CLUSTER — only when expanded + width
-            // animation has caught up. Wrapped in a weighted
-            // Row so it absorbs the slack between rose + MYTHARA
-            // ONLY when visible; when collapsed it's gone
-            // entirely so the rose + MYTHARA sit close.
+            // MIDDLE CLUSTER —
+            //   - EXPANDED: full chrome (clock + signal + M● + I●
+            //     + Me + 🎙 + battery)
+            //   - MINIMIZED (collapsed): condensed glance row of
+            //     time + wifi + phone signal + MiniMax dot, per
+            //     user spec "show time & MiniMax API status in
+            //     the pill in minimized state". WiFi + phone are
+            //     separate purple-neon icons so the user can
+            //     tell at a glance which transport is live.
             if (showCluster) {
+                // EXPANDED-state cluster (full chrome).
                 Row(
                     modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
@@ -410,13 +415,11 @@ fun MytharaStatusBar(
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Medium,
                     )
-                    SignalDots(litCount = network.bars, accent = SIGNAL_COLOR)
+                    WifiIcon(active = network.isWifi, accent = SIGNAL_COLOR, sizeDp = 14)
+                    PhoneSignalIcon(active = network.hasCellular, accent = SIGNAL_COLOR, sizeDp = 14)
                     // M / I health dots — wrapped in clickable
                     // boxes so tapping either one routes to the
-                    // Usage screen (where the user can see call
-                    // stats + re-sign-in to MiniMax). Each tap
-                    // consumes the event so the outer pill click
-                    // doesn't ALSO collapse.
+                    // Usage screen.
                     Box(
                         modifier = Modifier.clickable(
                             interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
@@ -440,10 +443,38 @@ fun MytharaStatusBar(
                     Text(
                         text = "${battery.percent}%",
                         color = MytharaColors.FgMute,
-                        // 10sp → 15sp (1.5× scale).
                         fontSize = 15.sp,
                     )
                     CircularBatteryIcon(percent = battery.percent, charging = battery.charging)
+                }
+            } else {
+                // COLLAPSED-state glance row — visible in the
+                // minimized pill. Skips Me / PTT / battery / I
+                // (those need an expand to reach). Keeps the most
+                // useful at-a-glance state: time + which networks
+                // are live + MiniMax API status.
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                ) {
+                    Text(
+                        text = nowFmt,
+                        color = MytharaColors.Fg,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    WifiIcon(active = network.isWifi, accent = SIGNAL_COLOR, sizeDp = 14)
+                    PhoneSignalIcon(active = network.hasCellular, accent = SIGNAL_COLOR, sizeDp = 14)
+                    Box(
+                        modifier = Modifier.clickable(
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                            indication = null,
+                            onClick = onOpenUsage,
+                        ),
+                    ) {
+                        HealthDot(label = "M", health = minimaxHealth, accent = MINIMAX_COLOR)
+                    }
                 }
             }
 
@@ -727,6 +758,92 @@ private fun CircularBatteryIcon(percent: Int, charging: Boolean) {
  * shadow gives the lit ones the "neon glow" the user asked for
  * without needing a real blur pass.
  */
+/**
+ * WiFi-style fan icon — three nested arcs + a dot at the base.
+ * Glows in purple [accent] when connected, fades to grey
+ * otherwise. Used in the minimized pill alongside
+ * [PhoneSignalIcon] so the user can tell at a glance "do I
+ * have WiFi" vs "do I have cellular" — replaces the older
+ * generic 4-dot SignalDots cluster which conflated both.
+ */
+@Composable
+private fun WifiIcon(active: Boolean, accent: Color, sizeDp: Int = 16) {
+    val color = if (active) accent else GREY
+    Box(
+        modifier = Modifier
+            .size(sizeDp.dp)
+            .then(if (active) Modifier.shadow(elevation = 5.dp, shape = CircleShape, ambientColor = accent, spotColor = accent) else Modifier),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.size(sizeDp.dp)) {
+            val w = size.width
+            val h = size.height
+            val cx = w / 2f
+            // Anchor the arc center near the BOTTOM so the fan
+            // opens upward like a standard WiFi glyph.
+            val cy = h * 0.85f
+            val stroke = w * 0.085f
+            val s = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke)
+            // Three concentric arcs, 90° wide opening upward.
+            for ((i, r) in listOf(w * 0.85f, w * 0.55f, w * 0.28f).withIndex()) {
+                drawArc(
+                    color = color,
+                    startAngle = 225f,        // top-left
+                    sweepAngle = 90f,         // span across to top-right
+                    useCenter = false,
+                    topLeft = androidx.compose.ui.geometry.Offset(cx - r, cy - r),
+                    size = androidx.compose.ui.geometry.Size(r * 2, r * 2),
+                    style = s,
+                )
+                // Suppress unused i — purely structural.
+                @Suppress("UNUSED_VARIABLE") val _i = i
+            }
+            // Solid dot at the apex (bottom of the fan).
+            drawCircle(
+                color = color,
+                radius = w * 0.075f,
+                center = androidx.compose.ui.geometry.Offset(cx, cy),
+            )
+        }
+    }
+}
+
+/**
+ * Phone-signal icon — 4 ascending bars. Glows purple when the
+ * device has a cellular link (SIM live, any cellular network
+ * available); fades to grey otherwise. Since we don't ask for
+ * READ_PHONE_STATE, we can't show true tower-bar strength —
+ * all four bars are filled when the connection exists,
+ * dimmed when not.
+ */
+@Composable
+private fun PhoneSignalIcon(active: Boolean, accent: Color, sizeDp: Int = 16) {
+    val color = if (active) accent else GREY
+    Box(
+        modifier = Modifier
+            .size(sizeDp.dp)
+            .then(if (active) Modifier.shadow(elevation = 5.dp, shape = CircleShape, ambientColor = accent, spotColor = accent) else Modifier),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.size(sizeDp.dp)) {
+            val w = size.width
+            val h = size.height
+            val barWidth = w * 0.15f
+            val gap = w * 0.07f
+            val heights = listOf(0.30f, 0.50f, 0.72f, 0.92f).map { it * h }
+            for ((i, hgt) in heights.withIndex()) {
+                val left = i * (barWidth + gap) + (w - 4 * barWidth - 3 * gap) / 2f
+                val top = h - hgt
+                drawRect(
+                    color = color,
+                    topLeft = androidx.compose.ui.geometry.Offset(left, top),
+                    size = androidx.compose.ui.geometry.Size(barWidth, hgt),
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun SignalDots(litCount: Int, accent: Color) {
     Row(
@@ -806,7 +923,12 @@ private const val TOP_PADDING_DP = 74
  *  enough to fit the rose + the MYTHARA wordmark with the
  *  small inter-element padding, narrow enough that the pill
  *  reads as a discrete floating island. */
-private const val COLLAPSED_WIDTH_FRACTION = 0.32f
+/** Collapsed-state pill width. Bumped 0.32 → 0.62 because the
+ *  minimized layout now shows time + wifi + phone + M● API
+ *  status alongside rose + MYTHARA (per user spec "show time
+ *  & MiniMax API status in the pill in minimized state").
+ *  The cluster doesn't fit at the old 32% width. */
+private const val COLLAPSED_WIDTH_FRACTION = 0.62f
 
 /** Expand-collapse animation duration. 350ms is the sweet spot
  *  — slow enough that the user perceives the growth as
@@ -905,7 +1027,18 @@ private fun readBattery(ctx: Context, intent: Intent? = null): BatterySnapshot {
  *     3 = ethernet / other validated
  *  Distinct from raw `connected` so the renderer can fade the
  *  unlit dots while still acknowledging "you're online". */
-private data class NetworkSnapshot(val connected: Boolean, val bars: Int)
+private data class NetworkSnapshot(
+    val connected: Boolean,
+    val bars: Int,
+    /** True when the currently-active validated transport is
+     *  WiFi. Drives the minimized-pill's WifiIcon glow. */
+    val isWifi: Boolean = false,
+    /** True when the device has a working cellular link (either
+     *  primary or secondary). We can't read true tower-bars
+     *  without READ_PHONE_STATE; this is a binary connected/
+     *  not signal that drives the PhoneSignalIcon's glow. */
+    val hasCellular: Boolean = false,
+)
 
 private fun readNetwork(ctx: Context): NetworkSnapshot {
     val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
@@ -915,11 +1048,28 @@ private fun readNetwork(ctx: Context): NetworkSnapshot {
     val validated = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) &&
         caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     if (!validated) return NetworkSnapshot(connected = false, bars = 0)
+    val isWifi = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+    val isCellularActive = caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+    // Also check whether ANY underlying network has cellular —
+    // a Pixel on WiFi typically still has cellular available as a
+    // backup, and the user expects the phone-signal icon to glow
+    // when the SIM is live, not only when cellular is the active
+    // transport. Walk allNetworks looking for a validated cellular.
+    val hasCellularAnywhere = isCellularActive || cm.allNetworks.any { net ->
+        val c = cm.getNetworkCapabilities(net) ?: return@any false
+        c.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
+            c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
     val bars = when {
-        caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> 4
+        isWifi -> 4
         caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> 3
-        caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> 2
+        isCellularActive -> 2
         else -> 1
     }
-    return NetworkSnapshot(connected = true, bars = bars)
+    return NetworkSnapshot(
+        connected = true,
+        bars = bars,
+        isWifi = isWifi,
+        hasCellular = hasCellularAnywhere,
+    )
 }
