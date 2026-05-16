@@ -105,6 +105,11 @@ class ToolRegistry @Inject constructor(
     // Shizuku-backed cosmetic system tweaks:
     cosmeticTool: com.mythara.agent.tools.CosmeticTool,
     listCosmeticTool: com.mythara.agent.tools.ListCosmeticTool,
+    // Network-interface enumeration via Java NetworkInterface API
+    // (works without netlink permission; the shell `ip addr` /
+    // `ifconfig` / `hostname -I` paths return Permission denied on
+    // Android, so this is the canonical way to ask "what's my IP").
+    networkInfoTool: com.mythara.agent.tools.NetworkInfoTool,
     private val mcpRegistry: com.mythara.mcp.McpRegistry,
     private val gate: ConfirmationGate,
     private val allowlist: com.mythara.data.AllowlistStore,
@@ -170,6 +175,7 @@ class ToolRegistry @Inject constructor(
         linuxVmBridgeTool,
         cosmeticTool,
         listCosmeticTool,
+        networkInfoTool,
     )
 
     /** Native + currently-known MCP tools, merged. Recomputed on every
