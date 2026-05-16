@@ -351,6 +351,28 @@ fun MytharaRoot(
                                 // bounded AuditLogPanel in Settings.
                                 com.mythara.ui.audit.AuditScreen(onBack = { nav.popBackStack() })
                             }
+                            composable(Routes.GlassesMemory) {
+                                // Capability Expansion v3 — recent
+                                // face-detected meetings (collapsed
+                                // by contact + 30 min + 50 m) +
+                                // grid of every glasses-sourced photo.
+                                com.mythara.ui.glasses.GlassesMemoryScreen(
+                                    onBack = { nav.popBackStack() },
+                                    onOpenContact = { nameKey ->
+                                        // PeopleScreen doesn't yet
+                                        // support a deep-link into
+                                        // a specific contact's
+                                        // detail panel from a route
+                                        // arg, so we just navigate
+                                        // to People — the row tap
+                                        // closes the loop. Future:
+                                        // pass nameKey via a state
+                                        // store the screen reads
+                                        // on open.
+                                        nav.navigate(Routes.People)
+                                    },
+                                )
+                            }
                             composable(Routes.Dashboard) {
                                 // Compact-mode Dashboard — the same
                                 // tile grid the tablet/foldable
@@ -613,6 +635,11 @@ object Routes {
     /** Full-screen audit-log viewer with search + filters + stats.
      *  Reachable from Settings → audit log panel → "view full". */
     const val Audit = "audit"
+
+    /** Capability Expansion v3 — Meta Display Glasses memory screen.
+     *  Surfaces recent face-detected meetings + glasses photo grid.
+     *  Reachable from the constellation OR from Settings → Glasses. */
+    const val GlassesMemory = "glasses-memory"
 }
 
 /** Hilt accessor for plain composables (no ViewModel) — lets the

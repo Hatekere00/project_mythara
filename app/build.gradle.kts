@@ -208,7 +208,9 @@ dependencies {
     // ML Kit Face Detection — on-device, bundled model. Powers the
     // front-camera face tracking on the Face avatar screen: head euler
     // angles drive the point-cloud head's pose, eye-open probabilities
-    // drive its blink.
+    // drive its blink. Capability Expansion v3 reuses the same detector
+    // (with PERFORMANCE_MODE_ACCURATE) for glasses-photo face boxes
+    // before MobileFaceNet runs identity matching.
     implementation(libs.google.mlkit.face.detection)
 
 
@@ -218,6 +220,39 @@ dependencies {
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)
+
+    // Capability Expansion v3 — Meta DAT SDK for phone↔Display Glasses.
+    // core: registration / sessions / device discovery.
+    // camera: video stream + capturePhoto() from the glasses POV.
+    // display: render UI on the glasses (text / icons / buttons /
+    //          images / video) with button-click callbacks routed back.
+    //
+    // *** UNCOMMENT THESE ONCE GITHUB_TOKEN IS CONFIGURED ***
+    // The Meta DAT SDK lives on GitHub Packages and the build returns
+    // 401 without a token. Steps:
+    //   1. Generate a GitHub PAT with `read:packages` scope:
+    //      https://github.com/settings/tokens?type=beta
+    //   2. Add `github_token=ghp_xxx...` to local.properties (gitignored)
+    //      OR export GITHUB_TOKEN=ghp_xxx... in your shell
+    //   3. Uncomment these three lines
+    //   4. Wire the real SDK calls in com.mythara.glasses.GlassesDatFacade
+    //
+    // Until that's done, com.mythara.glasses.GlassesDatFacade ships
+    // stub bodies that no-op gracefully so the rest of v3 (face
+    // pipeline, lifeline tagging, contact interactions, captioning,
+    // glasses memory screen) keeps building + working.
+    // implementation(libs.mwdat.core)
+    // implementation(libs.mwdat.camera)
+    // implementation(libs.mwdat.display)
+
+    // Capability Expansion v3 — TensorFlow Lite for MobileFaceNet
+    // (128-D face embeddings). Base runtime gives us Interpreter for
+    // the raw .tflite file; task-vision is reserved for future image-
+    // helper utilities. Model weights are lazy-downloaded into
+    // filesDir/face/mobilefacenet.tflite on first use, so the deps
+    // themselves only add ~3 MB to the APK.
+    implementation(libs.tflite.runtime)
+    implementation(libs.tflite.task.vision)
 
     // M5+ deps deferred until their milestones land:
     //   SQLCipher (Observe vault), Argon2 (Secret pw)

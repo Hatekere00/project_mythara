@@ -28,6 +28,14 @@
          access → Display over other apps. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <!-- Meta DAT SDK — Bluetooth permissions required to connect to
+         the Meta Display Glasses + neural band. BLUETOOTH_CONNECT is the
+         Android 12+ runtime-granted permission for actively
+         connecting to paired devices; the legacy install-time
+         BLUETOOTH permission is auto-granted on older API levels. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+
     <!-- Phone-control + communication (gated; require explicit user consent) -->
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.CALL_PHONE" />
@@ -130,6 +138,41 @@
         android:enableOnBackInvokedCallback="true"
         android:theme="@style/Theme.Mythara"
         tools:targetApi="36">
+
+        <!-- Capability Expansion v3 — Meta Display Glasses connection
+             service. Foreground service of type `specialUse` (Android
+             14+ — long-running, app-specific use that doesn't fit any
+             other type). Holds the DAT session alive across screen-off
+             so neural-band gestures + glasses photos keep flowing
+             into Mythara. -->
+        <service
+            android:name=".glasses.GlassesConnectionService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            tools:targetApi="34">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="meta display glasses session host for personal AI assistant" />
+        </service>
+
+        <!-- Meta DAT SDK config (Capability Expansion v3).
+             APPLICATION_ID = 0 is the documented Developer-Mode value;
+             a production build would pull a real ID from the Wearables
+             Developer Center. DAM_ENABLED = true unlocks the Display
+             capability (renderable UI on the glasses); without it,
+             addDisplay() returns an error. The CLIENT_TOKEN entry is
+             empty in Developer Mode and ignored by the SDK at runtime
+             but the SDK's manifest validator wants the key present. -->
+        <meta-data
+            android:name="com.meta.wearable.mwdat.APPLICATION_ID"
+            android:value="0" />
+        <meta-data
+            android:name="com.meta.wearable.mwdat.CLIENT_TOKEN"
+            android:value="" />
+        <meta-data
+            android:name="com.meta.wearable.mwdat.DAM_ENABLED"
+            android:value="true" />
+
 
         <activity
             android:name=".MainActivity"

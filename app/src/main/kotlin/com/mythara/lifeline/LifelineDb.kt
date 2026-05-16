@@ -86,6 +86,30 @@ data class LifelineEntity(
      */
     @ColumnInfo(name = "is_deleted") val isDeleted: Boolean = false,
     @ColumnInfo(name = "deleted_at_ms") val deletedAtMs: Long? = null,
+    /**
+     * Capability Expansion v3 — which device captured this photo.
+     * `"phone"` for MediaStore scans on this device, `"glasses"` for
+     * Meta Display Glasses captures via DAT, `"watch"` reserved for
+     * future Wear photo flows. Null on pre-v3 rows (treated as phone
+     * for filter purposes).
+     */
+    @ColumnInfo(name = "source_device_type") val sourceDeviceType: String? = null,
+    /**
+     * v3 — JSON array of contact `nameKey`s whose faces were matched
+     * in this photo by [FaceAnalysisWorker]. Null while analysis is
+     * pending or no faces matched. Empty array `[]` after analysis
+     * found no contact-known faces.
+     */
+    @ColumnInfo(name = "detected_contacts_json") val detectedContactsJson: String? = null,
+    /**
+     * v3 — User-supplied context added via the "add context" sheet on
+     * a LifelineCard. When non-null, gets folded into the caption-
+     * regeneration prompt so the AI description incorporates the
+     * extra detail ("this was at the cafe with Sam"). Persisted
+     * separately from `captionText` so the user's intent is
+     * preserved across model swaps and re-runs.
+     */
+    @ColumnInfo(name = "user_context") val userContext: String? = null,
 )
 
 enum class LifelineCaptionStatus {
@@ -203,6 +227,45 @@ interface LifelineDao {
     @Query("SELECT COUNT(*) FROM lifeline_entries")
     suspend fun total(): Int
 
+    /** Capability Expansion v3 — persist face-analysis results onto
+     *  a glasses photo row (or any other photo we run analysis on).
+     *  JSON shape: `["sarah","mom","mark"]` for matched contacts;
+     *  `[]` for "analysed, no matches"; null for "not yet analysed". */
+    @Query(
+        """
+        UPDATE lifeline_entries
+        SET detected_contacts_json = :json
+        WHERE id = :id
+        """,
+    )
+    suspend fun updateDetectedContacts(id: Long, json: String)
+
+    /** v3 — store user-added context for the caption regeneration
+     *  prompt. The captioner reads this on the next re-run. */
+    @Query(
+        """
+        UPDATE lifeline_entries
+        SET user_context = :context
+        WHERE id = :id
+        """,
+    )
+    suspend fun updateUserContext(id: Long, context: String)
+
+    /** v3 — every glasses photo (provenance-tagged), newest first.
+     *  Backs the GlassesMemoryScreen photo grid. */
+    @Query(
+        """
+        SELECT * FROM lifeline_entries
+        WHERE source_device_type = :sourceType AND is_deleted = 0
+        ORDER BY taken_ms DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun listBySourceDeviceType(
+        sourceType: String,
+        limit: Int = 200,
+    ): List<LifelineEntity>
+
     @Query("SELECT MAX(added_ms) FROM lifeline_entries WHERE is_remote = 0")
     suspend fun lastScannedAddedMs(): Long?
 
@@ -264,7 +327,7 @@ interface DaySummaryDao {
 
 @Database(
     entities = [LifelineEntity::class, DaySummaryEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class LifelineDb : RoomDatabase() {
@@ -302,11 +365,29 @@ private val MIGRATION_LIFELINE_2_3 = object : androidx.room.migration.Migration(
     }
 }
 
+/** v3 → v4 adds Capability Expansion v3 columns:
+ *  - `source_device_type` — phone / watch / glasses provenance
+ *  - `detected_contacts_json` — face-match results
+ *  - `user_context` — caption-prompt augmentation
+ *  All nullable; pre-migration rows default to null which the UI
+ *  + caption pipeline treat the same as "phone, not analysed". */
+private val MIGRATION_LIFELINE_3_4 = object : androidx.room.migration.Migration(3, 4) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE lifeline_entries ADD COLUMN source_device_type TEXT")
+        db.execSQL("ALTER TABLE lifeline_entries ADD COLUMN detected_contacts_json TEXT")
+        db.execSQL("ALTER TABLE lifeline_entries ADD COLUMN user_context TEXT")
+    }
+}
+
 @Singleton
 class LifelineRepository @Inject constructor(@ApplicationContext ctx: Context) {
     private val db: LifelineDb = Room.databaseBuilder(
         ctx, LifelineDb::class.java, "mythara_lifeline.db",
-    ).addMigrations(MIGRATION_LIFELINE_1_2, MIGRATION_LIFELINE_2_3).build()
+    ).addMigrations(
+        MIGRATION_LIFELINE_1_2,
+        MIGRATION_LIFELINE_2_3,
+        MIGRATION_LIFELINE_3_4,
+    ).build()
     val dao: LifelineDao = db.dao()
     val daySummaryDao: DaySummaryDao = db.daySummaryDao()
 }

@@ -32,13 +32,20 @@ class VoiceActionStore @Inject constructor() {
      *  amulet (Capability Expansion v2). Functionally identical to
      *  [AssistIntent] at the ChatViewModel level — both fire a one-shot
      *  SpeechRecognition listen — but kept distinct so audit logs can
-     *  tell the user how they invoked the agent. */
+     *  tell the user how they invoked the agent.
+     *
+     *  [GlassesPress] is the PTT button tapped inside the Mythara root
+     *  UI rendered on the Meta Display Glasses (Capability Expansion
+     *  v3). Same one-shot STT path; distinguished for audit + so the
+     *  reply rendering layer knows to also push partials/finals to the
+     *  glasses display via GlassesScreenStore. */
     enum class Source {
         AssistIntent,
         VoiceCommandIntent,
         WebSearchIntent,
         External,
         RosePress,
+        GlassesPress,
     }
 
     data class VoiceTrigger(val source: Source, val tsMillis: Long = System.currentTimeMillis())

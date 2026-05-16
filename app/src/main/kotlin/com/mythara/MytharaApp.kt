@@ -88,6 +88,15 @@ class MytharaApp : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
 
+        // Capability Expansion v3 — Meta DAT SDK initialization runs
+        // through the GlassesDatFacade so a missing SDK dep doesn't
+        // crash app startup. The facade no-ops + logs when DAT isn't
+        // wired (default for the initial commit while GITHUB_TOKEN is
+        // being configured); once the user uncomments the mwdat deps
+        // in app/build.gradle.kts and fills in the facade bodies,
+        // initialize() actually pairs with Meta AI.
+        com.mythara.glasses.GlassesDatFacade.initializeIfAvailable(this)
+
         // Seed the API status dots in MytharaStatusBar based on
         // configured credentials so the user sees blue/yellow on
         // first launch (instead of grey-until-first-call). Decay

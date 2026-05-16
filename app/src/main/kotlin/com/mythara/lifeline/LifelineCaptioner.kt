@@ -73,13 +73,22 @@ class LifelineCaptioner @Inject constructor(
      * Marks the row either CAPTIONED, FAILED (will retry), or SKIPPED
      * (out of retries).
      */
-    suspend fun captionOne(row: LifelineEntity): Boolean = withContext(Dispatchers.IO) {
+    suspend fun captionOne(
+        row: LifelineEntity,
+        /** Capability Expansion v3 — user-added context folded into
+         *  the prompt. When non-null, takes precedence over the
+         *  row's persisted `userContext`. Lets a chat-side "regenerate
+         *  with new context" flow inject text without persisting it
+         *  first (the LifelineCard "add context" sheet writes BOTH
+         *  the column AND passes the string here in the same op). */
+        additionalContext: String? = null,
+    ): Boolean = withContext(Dispatchers.IO) {
         val tempFile = runCatching { copyToTemp(Uri.parse(row.uri)) }.getOrElse {
             repo.dao.markFailed(row.id, "uri copy failed: ${it.message}")
             return@withContext false
         }
         try {
-            val prompt = buildPrompt(row)
+            val prompt = buildPrompt(row, additionalContext ?: row.userContext)
             val outcome = runCatching { vision.describeImage(tempFile, prompt = prompt) }
                 .getOrElse {
                     VisionService.Outcome(false, it.message ?: "threw", code = "exception")
@@ -111,13 +120,26 @@ class LifelineCaptioner @Inject constructor(
         }
     }
 
-    private fun buildPrompt(row: LifelineEntity): String {
+    private fun buildPrompt(row: LifelineEntity, userContext: String? = null): String {
         val taken = Date(row.takenMs)
         val dayLabel = SimpleDateFormat("EEEE", Locale.getDefault()).format(taken)
         val clockLabel = SimpleDateFormat("HH:mm", Locale.getDefault()).format(taken)
         val locLabel = if (row.lat != null && row.lng != null) {
             "GPS ${"%.4f".format(row.lat)}, ${"%.4f".format(row.lng)}"
         } else "no GPS"
+        // v3 — provenance + user-added context flow into the prompt so
+        // the model knows when a photo came from POV glasses (first-
+        // person framing) vs the phone camera, and so user-added
+        // context ("with Sam at the cafe") gets folded into the
+        // caption verbatim.
+        val sourceLabel = when (row.sourceDeviceType) {
+            "glasses" -> "my smart glasses (first-person POV)"
+            "watch" -> "my watch"
+            else -> "my phone camera"
+        }
+        val userContextSection = if (!userContext.isNullOrBlank()) {
+            "\n              - User added context: \"$userContext\" — fold this into the caption naturally."
+        } else ""
         return """
             Caption this casual photo I just took, for my personal
             timeline feed.
@@ -125,7 +147,7 @@ class LifelineCaptioner @Inject constructor(
             Context (use it but don't quote it back to me verbatim):
               - When: $dayLabel $clockLabel
               - Where: $locLabel
-              - From: my own camera
+              - From: $sourceLabel$userContextSection
 
             Rules:
               - One sentence, ≤ ${MAX_CAPTION_CHARS} characters.

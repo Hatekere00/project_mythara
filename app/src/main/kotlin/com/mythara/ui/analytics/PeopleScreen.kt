@@ -796,8 +796,105 @@ private fun ProfileDetail(
                 )
             }
         }
+
+        // Capability Expansion v3 phase 7 — recent interactions panel.
+        // Aggregated from ContactInteractionDb which dual-writes from
+        // ConversationMessageWriter (messages) + FaceAnalysisWorker
+        // (physical meets from glasses photos) + future AuditLogger
+        // hooks for calls.
+        Spacer(Modifier.height(12.dp))
+        RecentInteractionsPanel(nameKey = p.nameKey)
+
         Spacer(Modifier.height(40.dp))
     }
+}
+
+/**
+ * Loads + renders the most recent [ContactInteractionRow]s for a
+ * single contact. Capability Expansion v3 phase 7.
+ *
+ * Subscribes to the row count first so the panel can elide when
+ * the contact has no interactions logged yet (common for newly-
+ * added auto-detected contacts before the backfill worker has
+ * populated their history).
+ */
+@Composable
+private fun RecentInteractionsPanel(nameKey: String) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val entry = remember { dagger.hilt.android.EntryPointAccessors.fromApplication(
+        ctx.applicationContext,
+        PeopleScreenInteractionEntryPoint::class.java,
+    ) }
+    val rows = androidx.compose.runtime.produceState<List<com.mythara.analytics.interactions.ContactInteractionRow>>(
+        initialValue = emptyList(),
+        key1 = nameKey,
+    ) {
+        value = runCatching {
+            entry.interactionRepo().dao.listForContact(nameKey, limit = 20)
+        }.getOrDefault(emptyList())
+    }
+    if (rows.value.isEmpty()) return
+    DetailCard("${Glyph.DiamondOutline} recent interactions") {
+        rows.value.forEach { row ->
+            InteractionRow(row)
+            Spacer(Modifier.height(2.dp))
+        }
+    }
+}
+
+@Composable
+private fun InteractionRow(row: com.mythara.analytics.interactions.ContactInteractionRow) {
+    val icon = when (row.kind) {
+        "message_sent" -> "→"
+        "message_received" -> "←"
+        "call_outgoing" -> "↗"
+        "call_incoming" -> "↙"
+        "physical_meet" -> "${Glyph.DiamondFilled}"
+        else -> "${Glyph.DiamondOutline}"
+    }
+    val label = when (row.kind) {
+        "message_sent" -> "msg sent"
+        "message_received" -> "msg received"
+        "call_outgoing" -> "call out"
+        "call_incoming" -> "call in"
+        "physical_meet" -> "met in person"
+        else -> row.kind
+    }
+    val srcSuffix = when (row.source) {
+        "glasses" -> " · via glasses"
+        "notification" -> ""
+        "agent_action" -> " · agent"
+        else -> " · ${row.source}"
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "$icon  $label$srcSuffix",
+            color = MytharaColors.Fg,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Text(
+            text = formatTs(row.tsMs),
+            color = MytharaColors.FgDim,
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+    if (!row.placeLabel.isNullOrBlank()) {
+        Text(
+            "${Glyph.AccentBar} ${row.placeLabel}",
+            color = MytharaColors.FgDim,
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
+@dagger.hilt.EntryPoint
+@dagger.hilt.InstallIn(dagger.hilt.components.SingletonComponent::class)
+interface PeopleScreenInteractionEntryPoint {
+    fun interactionRepo(): com.mythara.analytics.interactions.ContactInteractionRepository
 }
 
 /**

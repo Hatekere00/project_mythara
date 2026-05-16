@@ -64,6 +64,23 @@ mlkitLanguageId = "17.0.6"
 # Drives the front-camera face-tracking on the Face avatar screen.
 mlkitFaceDetection = "16.1.7"
 
+# Meta Wearables Device Access Toolkit (DAT) — Capability Expansion v3.
+# Powers the phone↔Meta Display Glasses integration: camera streaming +
+# photo capture from the glasses, display rendering on the glasses
+# (text / icons / buttons / images / video), session lifecycle.
+# Requires GITHUB_TOKEN env var (or github_token= in local.properties)
+# with read:packages scope to pull from Meta's GitHub Maven registry.
+mwdat = "0.7.0"
+
+# TensorFlow Lite — runs MobileFaceNet for on-device face embeddings
+# (Capability Expansion v3 phase 5). The base `tensorflow-lite`
+# package provides the Interpreter; task-vision adds higher-level
+# image helpers we may want later. Model weights are lazy-downloaded
+# into filesDir/face/mobilefacenet.tflite (~5 MB) on first use; the
+# dependency itself is just the runtime.
+tflite = "2.16.1"
+tfliteTaskVision = "0.4.4"
+
 # Deferred — added back when their milestone lands:
 #   camerax  → M5 (take_photo tool)
 #   sqlcipher → M8 (Observe vault)
@@ -156,6 +173,21 @@ google-mlkit-language-id = { group = "com.google.mlkit", name = "language-id", v
 # ML Kit Face Detection — front-camera head-pose + eye-open tracking
 # for the Face avatar screen. Bundled model, fully on-device/offline.
 google-mlkit-face-detection = { group = "com.google.mlkit", name = "face-detection", version.ref = "mlkitFaceDetection" }
+
+# Meta DAT SDK — Capability Expansion v3 phone↔Display Glasses.
+# Three modules: core (registration / session / device discovery),
+# camera (stream + photo capture from glasses), display (render UI on
+# glasses). Pulled from Meta's GitHub Maven registry (see
+# settings.gradle.kts for repo config + token requirement).
+mwdat-core = { group = "com.meta.wearable", name = "mwdat-core", version.ref = "mwdat" }
+mwdat-camera = { group = "com.meta.wearable", name = "mwdat-camera", version.ref = "mwdat" }
+mwdat-display = { group = "com.meta.wearable", name = "mwdat-display", version.ref = "mwdat" }
+
+# TensorFlow Lite runtime — Interpreter for MobileFaceNet inference.
+# task-vision is the optional image-helper layer; left in deps for
+# future use (FaceEmbedder uses raw Interpreter directly).
+tflite-runtime = { group = "org.tensorflow", name = "tensorflow-lite", version.ref = "tflite" }
+tflite-task-vision = { group = "org.tensorflow", name = "tensorflow-lite-task-vision", version.ref = "tfliteTaskVision" }
 
 
 # Biometric / device-credential unlock at app entry

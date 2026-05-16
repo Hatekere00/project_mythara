@@ -1,0 +1,124 @@
+package com.mythara.face
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Rect
+import android.util.Log
+import dagger.hilt.android.qualifiers.ApplicationContext
+import org.tensorflow.lite.Interpreter
+import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import javax.inject.Inject
+import javax.inject.Singleton
+
+/**
+ * Computes a 128-D L2-normalised face embedding from a cropped face.
+ *
+ * Backed by MobileFaceNet (TensorFlow Lite) — small (~5 MB), fast
+ * (~30 ms per inference on Pixel 10's NPU), and gives state-of-the-
+ * art identity matching at 112×112 input. Weights are lazily loaded
+ * from `filesDir/face/mobilefacenet.tflite`; downloader logic lives
+ * in [FaceEmbedderModelDownloader].
+ *
+ * Public API:
+ *   • [embed] takes a bitmap + face bbox and returns a FloatArray(128)
+ *     or null when the model isn't available.
+ *   • [isReady] — true iff the .tflite file exists + the interpreter
+ *     has been initialised. Background code paths can short-circuit
+ *     when false (analysis worker just no-ops; UI surfaces a "model
+ *     downloading" hint).
+ *
+ * Cosine similarity between two embeddings is the identity score;
+ * see [ContactFaceMatcher] for the matching logic.
+ */
+@Singleton
+class FaceEmbedder @Inject constructor(
+    @ApplicationContext private val context: Context,
+) {
+    @Volatile private var interpreter: Interpreter? = null
+    @Volatile private var modelFile: File? = null
+
+    fun isReady(): Boolean {
+        if (interpreter != null) return true
+        val file = modelLocation()
+        if (!file.exists()) return false
+        return runCatching {
+            interpreter = Interpreter(file)
+            modelFile = file
+            true
+        }.getOrElse {
+            Log.w(TAG, "interpreter init failed: ${it.message}")
+            false
+        }
+    }
+
+    /**
+     * Crop the face out of [bitmap] using [box], resize to 112×112,
+     * normalise to [-1, 1], run MobileFaceNet, L2-normalise the
+     * output. Returns a 128-D FloatArray or null on failure.
+     */
+    fun embed(bitmap: Bitmap, box: Rect): FloatArray? {
+        if (!isReady()) return null
+        val tflite = interpreter ?: return null
+
+        val crop = runCatching {
+            Bitmap.createBitmap(
+                bitmap,
+                box.left.coerceAtLeast(0),
+                box.top.coerceAtLeast(0),
+                (box.right - box.left).coerceAtMost(bitmap.width - box.left),
+                (box.bottom - box.top).coerceAtMost(bitmap.height - box.top),
+            ).let { Bitmap.createScaledBitmap(it, INPUT_DIM, INPUT_DIM, true) }
+        }.getOrNull() ?: return null
+
+        val input = ByteBuffer.allocateDirect(INPUT_DIM * INPUT_DIM * 3 * 4)
+            .order(ByteOrder.nativeOrder())
+        val pixels = IntArray(INPUT_DIM * INPUT_DIM)
+        crop.getPixels(pixels, 0, INPUT_DIM, 0, 0, INPUT_DIM, INPUT_DIM)
+        for (p in pixels) {
+            // Normalise to [-1, 1] per MobileFaceNet's training recipe.
+            input.putFloat(((p shr 16 and 0xff) - 127.5f) / 128f)
+            input.putFloat(((p shr 8 and 0xff) - 127.5f) / 128f)
+            input.putFloat(((p and 0xff) - 127.5f) / 128f)
+        }
+        input.rewind()
+
+        val output = Array(1) { FloatArray(EMBEDDING_DIM) }
+        return runCatching {
+            tflite.run(input, output)
+            l2Normalise(output[0])
+        }.getOrElse {
+            Log.w(TAG, "tflite.run failed: ${it.message}")
+            null
+        }
+    }
+
+    private fun l2Normalise(v: FloatArray): FloatArray {
+        var sum = 0f
+        for (x in v) sum += x * x
+        val norm = kotlin.math.sqrt(sum).coerceAtLeast(1e-12f)
+        val out = FloatArray(v.size)
+        for (i in v.indices) out[i] = v[i] / norm
+        return out
+    }
+
+    private fun modelLocation(): File = File(context.filesDir, "face/$MODEL_NAME")
+
+    companion object {
+        private const val TAG = "Mythara/FaceEmbed"
+        const val INPUT_DIM = 112
+        const val EMBEDDING_DIM = 128
+        const val MODEL_NAME = "mobilefacenet.tflite"
+
+        /** Cosine distance between two L2-normalised embeddings.
+         *  Equivalent to (1 - cosine-similarity); lower = more
+         *  similar. Range [0, 2]. */
+        fun cosineDistance(a: FloatArray, b: FloatArray): Float {
+            if (a.size != b.size) return Float.MAX_VALUE
+            var dot = 0f
+            for (i in a.indices) dot += a[i] * b[i]
+            return 1f - dot
+        }
+    }
+}

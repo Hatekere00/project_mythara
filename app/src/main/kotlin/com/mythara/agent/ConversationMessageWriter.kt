@@ -33,6 +33,11 @@ import javax.inject.Singleton
 class ConversationMessageWriter @Inject constructor(
     private val vault: LearningVault,
     private val embedder: LocalEmbedder,
+    /** Capability Expansion v3 — dual-write so the new
+     *  ProfileDetail "recent interactions" panel + the
+     *  GlassesMemoryScreen don't have to scan the vault by facet
+     *  on every render. */
+    private val interactionRepo: com.mythara.analytics.interactions.ContactInteractionRepository,
 ) {
     suspend fun record(
         contactName: String,
@@ -55,6 +60,7 @@ class ConversationMessageWriter @Inject constructor(
             if (pkg.isNotBlank()) add("app:$pkg")
             add("direction:$direction")
         }
+        val now = System.currentTimeMillis()
         runCatching {
             vault.add(
                 content = content,
@@ -64,9 +70,22 @@ class ConversationMessageWriter @Inject constructor(
                 embedding = embedding,
                 embModel = if (embedding != null) EmbeddingsModelStore.MODEL_ID else null,
                 conf = 0.75,
-                now = System.currentTimeMillis(),
+                now = now,
             )
         }.onFailure { Log.w(TAG, "vault.add for $direction message failed: ${it.message}") }
+
+        // v3 dual-write to the structured interactions log.
+        runCatching {
+            interactionRepo.dao.insert(
+                com.mythara.analytics.interactions.ContactInteractionRow(
+                    nameKey = displayContact.lowercase(),
+                    tsMs = now,
+                    kind = if (direction == "outgoing") "message_sent" else "message_received",
+                    source = "notification",
+                    note = pkg.ifBlank { null },
+                ),
+            )
+        }.onFailure { Log.w(TAG, "interactions.insert for $direction failed: ${it.message}") }
     }
 
     companion object {
