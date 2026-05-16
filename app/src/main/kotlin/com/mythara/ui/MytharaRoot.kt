@@ -22,10 +22,9 @@ import com.mythara.auth.AuthState
 import com.mythara.ui.about.AboutMeScreen
 import com.mythara.ui.about.AboutScreen
 import com.mythara.ui.amulet.AMULET_SIZE_DP
-import com.mythara.ui.amulet.ConstellationSlot
+import com.mythara.ui.amulet.AmuletChip
+import com.mythara.ui.amulet.AmuletPage
 import com.mythara.ui.amulet.PopupAmulet
-import com.mythara.ui.amulet.QuickAction
-import com.mythara.ui.amulet.QuickActionIds
 import com.mythara.ui.amulet.RoseGeometry
 import com.mythara.ui.amulet.detectGlobalLongPress
 import com.mythara.ui.dashboard.DashboardHome
@@ -253,6 +252,20 @@ fun MytharaRoot(
                             composable(Routes.Notes) {
                                 NotesScreen(onBack = { nav.popBackStack() })
                             }
+                            composable(Routes.Memory) {
+                                // Lifeline / memory grid — full-pane
+                                // version of the right-pane TimelineGridPane.
+                                com.mythara.ui.lifeline.TimelineGridPane(
+                                    onClose = { nav.popBackStack() },
+                                )
+                            }
+                            composable(Routes.Tasks) {
+                                // Cross-device task list — full-pane
+                                // version of the right-pane TasksScreenPane.
+                                com.mythara.ui.tasks.TasksScreenPane(
+                                    onClose = { nav.popBackStack() },
+                                )
+                            }
                             composable(Routes.Permissions) {
                                 PermissionsScreen(onBack = { nav.popBackStack() })
                             }
@@ -276,8 +289,8 @@ fun MytharaRoot(
                                 // existing destination via this
                                 // single-pane NavController.
                                 DashboardHome(
-                                    onOpenTasks = { nav.navigate(Routes.Notes) },
-                                    onOpenTimeline = { nav.navigate(Routes.Notes) },
+                                    onOpenTasks = { nav.navigate(Routes.Tasks) },
+                                    onOpenTimeline = { nav.navigate(Routes.Memory) },
                                     onOpenDevices = { nav.navigate(Routes.People) },
                                     onOpenHr = { nav.navigate(Routes.Insights) },
                                     onOpenHealth = { nav.navigate(Routes.Insights) },
@@ -303,85 +316,66 @@ fun MytharaRoot(
                         )
                     }
 
-                    // Slot positions are clock-degrees (0° = 12, 90° = 3).
-                    // 10 slots at 36° apart spread evenly around the FULL
-                    // CIRCLE — the popup amulet is anchored at the user's
-                    // press point, not pinned to the screen bottom, so
-                    // every angular position is reachable.
+                    // Build the paginated amulet pages. Each page is a
+                    // ring of chips around the rose; the user cycles
+                    // pages by tapping the central rose. Page order
+                    // (cycles forward, wraps):
                     //
-                    // Slot 0 (12 o'clock / top) = Chat (home), since
-                    // the old "tap rose → home" gesture went away with
-                    // the persistent amulet. Tap the central rose to
-                    // dismiss without navigating.
-                    val slots = remember {
-                        listOf(
-                            ConstellationSlot(0f, "chat", Routes.Chat, MytharaColors.Bok),
-                            ConstellationSlot(36f, "settings", Routes.Settings, MytharaColors.SurfaceHigh),
-                            ConstellationSlot(72f, "perms", Routes.Permissions, MytharaColors.Charple),
-                            ConstellationSlot(108f, "insights", Routes.Insights, MytharaColors.Bok),
-                            ConstellationSlot(144f, "face", Routes.Face, MytharaColors.Bok),
-                            ConstellationSlot(180f, "triage", Routes.Triage, MytharaColors.Charple),
-                            ConstellationSlot(216f, "people", Routes.People, MytharaColors.Charple),
-                            // Sentinel route — handled in onSlotTap as
-                            // "open Spotlight drawer overlay" rather
-                            // than a NavHost navigate. Spotlight needs
-                            // to layer above every destination, so it
-                            // doesn't fit the NavHost route model.
-                            ConstellationSlot(252f, "drawer", ROUTE_SPOTLIGHT, MytharaColors.Mustard),
-                            ConstellationSlot(288f, "usage", Routes.Usage, MytharaColors.Mustard),
-                            ConstellationSlot(324f, "dash", Routes.Dashboard, MytharaColors.Malibu),
-                        )
+                    //   0. Menu — primary navigation destinations
+                    //   1. PTT  — voice / mic quick actions
+                    //   2. More — secondary screens (Memory, Tasks,
+                    //              Notes, Music vocab, About me)
+                    //   3+. Apps — installed launcher apps, paginated
+                    //              8 per ring
+                    //
+                    // Page list is `remember`ed lazily — InstalledApps
+                    // takes ~50ms to enumerate, so we want it computed
+                    // once per amulet open, not per recomposition.
+                    val ctx = androidx.compose.ui.platform.LocalContext.current
+                    val appsProvider = remember {
+                        dagger.hilt.android.EntryPointAccessors.fromApplication(
+                            ctx.applicationContext,
+                            MytharaRootEntryPoint::class.java,
+                        ).installedApps()
                     }
-
-                    // The summon-anywhere popup. Rendered above the
-                    // active layout when the user has triggered a
-                    // long-press; tap a chip to navigate, tap the
-                    // central rose or the scrim to dismiss.
-                    // PTT-mode quick actions for the amulet's
-                    // second face (toggled from center-tap on the
-                    // rose). Same four tools as the inline composer
-                    // — mic / STT-mute / music mode / continuous
-                    // voice — surfaced thumb-reachable around the
-                    // rose so they're one tap from anywhere.
-                    val pttActions = remember {
-                        listOf(
-                            QuickAction(QuickActionIds.Mic, "🎤"),
-                            QuickAction(QuickActionIds.SttMute, "🤫"),
-                            QuickAction(QuickActionIds.MusicMode, "♪"),
-                            QuickAction(QuickActionIds.ContinuousVoice, "∞"),
-                        )
+                    var amuletPages by remember { mutableStateOf<List<AmuletPage>>(emptyList()) }
+                    LaunchedEffect(amuletAnchor) {
+                        if (amuletAnchor != null && amuletPages.isEmpty()) {
+                            amuletPages = buildAmuletPages(
+                                appsProvider = appsProvider,
+                                onNavigate = { route ->
+                                    amuletAnchor = null
+                                    if (route == ROUTE_SPOTLIGHT) {
+                                        spotlightOpen = true
+                                    } else {
+                                        nav.navigate(route) { launchSingleTop = true }
+                                    }
+                                },
+                                onLaunchPackage = { pkg ->
+                                    amuletAnchor = null
+                                    appsProvider.launchIntent(pkg)?.let {
+                                        runCatching { ctx.startActivity(it) }
+                                    }
+                                },
+                                onPttPlaceholder = { amuletAnchor = null },
+                            )
+                        } else if (amuletAnchor == null) {
+                            // Re-build next time so a freshly-installed
+                            // app shows up in the wheel without an
+                            // app restart.
+                            amuletPages = emptyList()
+                        }
                     }
 
                     amuletAnchor?.let { anchor ->
-                        PopupAmulet(
-                            anchorPx = anchor,
-                            slots = slots,
-                            pttActions = pttActions,
-                            amuletSizeDp = AMULET_SIZE_DP.value.toInt(),
-                            onSlotTap = { slot ->
-                                amuletAnchor = null
-                                if (slot.route == ROUTE_SPOTLIGHT) {
-                                    spotlightOpen = true
-                                } else {
-                                    nav.navigate(slot.route) {
-                                        launchSingleTop = true
-                                    }
-                                }
-                            },
-                            onPttActionTap = { _ ->
-                                // Phase placeholder — the four
-                                // composer tools (mic / STT-mute /
-                                // music / continuous-voice) live in
-                                // ChatScreen's composer + the
-                                // wallpaper test broadcasts;
-                                // wiring through the amulet hub is
-                                // a follow-up. Dismiss for now so
-                                // the gesture path is end-to-end
-                                // testable.
-                                amuletAnchor = null
-                            },
-                            onScrimTap = { amuletAnchor = null },
-                        )
+                        if (amuletPages.isNotEmpty()) {
+                            PopupAmulet(
+                                anchorPx = anchor,
+                                pages = amuletPages,
+                                amuletSizeDp = AMULET_SIZE_DP.value.toInt(),
+                                onScrimTap = { amuletAnchor = null },
+                            )
+                        }
                     }
 
                     // Spotlight pull-down drawer — sliding-from-top
@@ -494,6 +488,15 @@ object Routes {
     const val MusicVocab = "music-vocab"
     /** Dedicated permissions screen — runtime + special perms in one place. */
     const val Permissions = "permissions"
+    /** Lifeline / memory grid — the chronological photo + caption
+     *  feed Mythara built from the user's camera roll + chat
+     *  imports. Was reachable only from the right pane in two-
+     *  pane mode; now a top-level route so the amulet can surface
+     *  it on the "more" page. */
+    const val Memory = "memory"
+    /** Cross-device task list. Was reachable only from the right
+     *  pane; promoted to a top-level route alongside Memory. */
+    const val Tasks = "tasks"
     /** Notification triage — see auto-dismissed, mark important. */
     const val Triage = "triage"
     /** MiniMax API usage / quota dashboard. */
@@ -507,3 +510,115 @@ object Routes {
      *  as the platform's token-plan dashboard. */
     const val MiniMaxSignIn = "minimax-signin"
 }
+
+/** Hilt accessor for plain composables (no ViewModel) — lets the
+ *  root resolve singletons like InstalledAppsProvider that the
+ *  amulet pages need. */
+@dagger.hilt.EntryPoint
+@dagger.hilt.InstallIn(dagger.hilt.components.SingletonComponent::class)
+interface MytharaRootEntryPoint {
+    fun installedApps(): com.mythara.launcher.InstalledAppsProvider
+}
+
+/**
+ * Build the paginated amulet's page list. Pages cycle on each
+ * center-rose tap, in this order:
+ *
+ *   0. Menu   — top primary destinations
+ *   1. PTT    — voice / mic quick actions
+ *   2. More   — secondary screens (Memory, Tasks, Notes, Music
+ *               vocab, About me, About)
+ *   3+. Apps  — installed apps split into 8-per-page rings,
+ *               sorted A→Z. Lazy: only fetched when the amulet
+ *               opens.
+ *
+ * Suspending — the apps lookup hits PackageManager.
+ */
+private suspend fun buildAmuletPages(
+    appsProvider: com.mythara.launcher.InstalledAppsProvider,
+    onNavigate: (String) -> Unit,
+    onLaunchPackage: (String) -> Unit,
+    onPttPlaceholder: () -> Unit,
+): List<AmuletPage> {
+    // Page 0: primary nav destinations. Same 9 + spotlight that
+    // the previous amulet exposed, just shaped as AmuletChip.
+    val menuChips = listOf(
+        chipAt(0f, "chat", MytharaColors.Bok) { onNavigate(Routes.Chat) },
+        chipAt(36f, "settings", MytharaColors.SurfaceHigh) { onNavigate(Routes.Settings) },
+        chipAt(72f, "perms", MytharaColors.Charple) { onNavigate(Routes.Permissions) },
+        chipAt(108f, "insights", MytharaColors.Bok) { onNavigate(Routes.Insights) },
+        chipAt(144f, "face", MytharaColors.Bok) { onNavigate(Routes.Face) },
+        chipAt(180f, "triage", MytharaColors.Charple) { onNavigate(Routes.Triage) },
+        chipAt(216f, "people", MytharaColors.Charple) { onNavigate(Routes.People) },
+        chipAt(252f, "drawer", MytharaColors.Mustard) { onNavigate(ROUTE_SPOTLIGHT) },
+        chipAt(288f, "usage", MytharaColors.Mustard) { onNavigate(Routes.Usage) },
+        chipAt(324f, "dash", MytharaColors.Malibu) { onNavigate(Routes.Dashboard) },
+    )
+
+    // Page 1: PTT actions — current placeholder dispatches to
+    // the existing handler. Wiring through to the actual
+    // composer mic / STT-mute / music / continuous-voice
+    // toggles is a separate piece (those tools live in
+    // ChatScreen's composer; an event-bus or callback hop is
+    // the next step).
+    val pttChips = listOf(
+        chipGlyph(0f, "mic", "🎤", MytharaColors.Charple, onPttPlaceholder),
+        chipGlyph(90f, "mute", "🤫", MytharaColors.Charple, onPttPlaceholder),
+        chipGlyph(180f, "music", "♪", MytharaColors.Bok, onPttPlaceholder),
+        chipGlyph(270f, "voice", "∞", MytharaColors.Bok, onPttPlaceholder),
+    )
+
+    // Page 2: previously-orphan secondary screens. These exist
+    // as routes but weren't in the menu wheel; surfacing them
+    // here gives the user a path to every non-tablet-only
+    // screen Mythara ships.
+    val moreChips = listOf(
+        chipAt(0f, "memory", MytharaColors.Bok) { onNavigate(Routes.Memory) },
+        chipAt(60f, "tasks", MytharaColors.Mustard) { onNavigate(Routes.Tasks) },
+        chipAt(120f, "notes", MytharaColors.Charple) { onNavigate(Routes.Notes) },
+        chipAt(180f, "music vocab", MytharaColors.Bok) { onNavigate(Routes.MusicVocab) },
+        chipAt(240f, "about me", MytharaColors.Charple) { onNavigate(Routes.AboutMe) },
+        chipAt(300f, "about", MytharaColors.SurfaceHigh) { onNavigate(Routes.About) },
+    )
+
+    // Page 3+: installed launcher apps, 8 per page. Each chip
+    // lazily fetches its icon AT FIRST PAINT so a 100-app phone
+    // doesn't pay the icon-decode cost up-front. Until the icon
+    // resolves, the chip's glyph (initial letter) shows.
+    val apps = runCatching { appsProvider.list() }.getOrDefault(emptyList())
+    val appPages = mutableListOf<AmuletPage>()
+    if (apps.isNotEmpty()) {
+        val perPage = 8
+        val total = (apps.size + perPage - 1) / perPage
+        apps.chunked(perPage).forEachIndexed { pageIdx, chunk ->
+            val n = chunk.size
+            val chips = chunk.mapIndexed { i, app ->
+                val angle = (i * 360f) / n
+                AmuletChip(
+                    angleDeg = angle,
+                    caption = app.label.take(10),
+                    accent = MytharaColors.Bok,
+                    glyph = app.initial,
+                    onTap = { onLaunchPackage(app.packageName) },
+                )
+            }
+            appPages += AmuletPage(
+                label = "apps · ${pageIdx + 1}/$total",
+                chips = chips,
+            )
+        }
+    }
+
+    return buildList {
+        add(AmuletPage("menu", menuChips))
+        add(AmuletPage("ptt", pttChips))
+        add(AmuletPage("more", moreChips))
+        addAll(appPages)
+    }
+}
+
+private fun chipAt(angleDeg: Float, caption: String, accent: androidx.compose.ui.graphics.Color, onTap: () -> Unit): AmuletChip =
+    AmuletChip(angleDeg = angleDeg, caption = caption, accent = accent, onTap = onTap)
+
+private fun chipGlyph(angleDeg: Float, caption: String, glyph: String, accent: androidx.compose.ui.graphics.Color, onTap: () -> Unit): AmuletChip =
+    AmuletChip(angleDeg = angleDeg, caption = caption, accent = accent, glyph = glyph, onTap = onTap)

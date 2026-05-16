@@ -83,17 +83,21 @@ private fun readCutoutRect(view: View, density: Float): CutoutRect? {
 private fun readCutoutRectFromInsets(insets: WindowInsets, density: Float): CutoutRect? {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
     val cutout = insets.displayCutout ?: return null
-    val rects = cutout.boundingRects
-    if (rects.isEmpty()) return null
-    // Prefer the topmost cutout (the camera hole on every centred-
-    // pinhole Pixel + Galaxy ships top-edge). If there's a notch
-    // shape with multiple rects, take the union — keeps the dock
-    // wrap consistent.
-    val top = rects.minByOrNull { it.top } ?: return null
+    // Prefer DisplayCutout.getBoundingRectTop() over generic
+    // boundingRects — it returns a single Rect for the top-edge
+    // cutout directly (which is the centred-pinhole case on every
+    // Pixel + Galaxy device shipped 2023+) without the list
+    // iteration overhead. API 29+; falls back to boundingRects on
+    // older P devices.
+    val topRect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        cutout.boundingRectTop.takeIf { !it.isEmpty }
+    } else {
+        cutout.boundingRects.minByOrNull { it.top }
+    } ?: return null
     return CutoutRect(
-        leftDp = top.left / density,
-        topDp = top.top / density,
-        widthDp = (top.right - top.left) / density,
-        heightDp = (top.bottom - top.top) / density,
+        leftDp = topRect.left / density,
+        topDp = topRect.top / density,
+        widthDp = (topRect.right - topRect.left) / density,
+        heightDp = (topRect.bottom - topRect.top) / density,
     )
 }

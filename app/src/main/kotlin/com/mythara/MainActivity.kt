@@ -57,6 +57,20 @@ class MainActivity : FragmentActivity() {
         // notification access — important so the user can still
         // pull down the system shade when they need it.
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        // Explicitly opt into laying out under the display cutout
+        // (camera pinhole zone) — without this, immersive mode
+        // transitions can intermittently cause Compose content to
+        // jump up/down as the system flips between cutout-aware
+        // and cutout-avoiding layouts. ALWAYS = same behaviour
+        // regardless of orientation, the right pick when our
+        // status bar is custom-rendered and wraps the cutout via
+        // [com.mythara.ui.system.DynamicIsland].
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode =
+                    android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            }
+        }
         val controller = WindowInsetsControllerCompat(window, window.decorView)
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE

@@ -89,16 +89,22 @@ fun DynamicIsland(
     val rotation = remember { Animatable(initialValue = 0f) }
     val pulseScale = remember { Animatable(initialValue = 1f) }
 
-    // Bouncing-dock entrance. 0f → 1f spring with low damping ratio
-    // so the pills "bounce" into place around the cutout. Replays
-    // when the cutout reference changes (fold posture flip).
+    // Bouncing-dock entrance — 0f → 1f spring whose damping +
+    // stiffness target Apple's published Dynamic Island feel
+    // (WWDC23 "Animate with springs"). Apple's official guidance
+    // is "bounce ≤ 0.4"; Compose's MediumBouncy preset (0.5) is
+    // above that ceiling and reads as exaggerated. We use a
+    // custom dampingRatio of 0.7 (≈ bounce 0.25, "noticeable but
+    // not silly") + StiffnessMediumLow which lands a ~0.31s
+    // settle — inside Apple's documented 0.3-0.5s range. Replays
+    // when cutout key changes (fold posture flip).
     val bounce = remember { Animatable(0f) }
     LaunchedEffect(cutout?.widthDp, cutout?.centerXDp) {
         bounce.snapTo(0f)
         bounce.animateTo(
             targetValue = 1f,
             animationSpec = spring(
-                dampingRatio = Spring.DampingRatioMediumBouncy,
+                dampingRatio = 0.7f,
                 stiffness = Spring.StiffnessMediumLow,
             ),
         )
@@ -369,16 +375,23 @@ private fun RoseMarkSpinning(
     }
 }
 
-private const val PILL_HEIGHT_DP = 22
-private const val ROSE_DP = 14
-private const val ACCENT_DOT_DP = 6
+/** Pill height — bumped from 22dp → 26dp so the pill visually
+ *  swallows the camera pinhole on Pixel-class devices. Pinhole
+ *  diameter on Pixel 8/9/10 ≈ 24dp at xxhdpi; a shorter pill
+ *  meant the hole peeked above + below it. 26dp clears
+ *  comfortably with the new 8dp gap on either side. */
+private const val PILL_HEIGHT_DP = 26
+private const val ROSE_DP = 16
+private const val ACCENT_DOT_DP = 7
 private const val MAX_INSIGHT_CHARS = 28
 private const val POLL_INTERVAL_MS = 500L
 
 /** Gap between each half-pill and the cutout edge, in dp.
- *  Small enough that the dock reads as continuous; large enough
- *  that the rounded corner doesn't clip into the cutout glass. */
-private const val WRAP_GAP_DP = 4f
+ *  Bumped from 4dp → 8dp per Google's published touch-target
+ *  spacing guidance — touch sensitivity is reduced inside the
+ *  cutout zone, so we keep our 48dp tap regions outside the
+ *  cutout's bounding rect with 8dp of breathing room. */
+private const val WRAP_GAP_DP = 8f
 
 /** Same near-black as the iPhone Dynamic Island so the pill reads
  *  visually as "system chrome floating above the strip" rather than
