@@ -107,6 +107,14 @@ object GlassesDatFacade {
     private val _lastRegistrationError = MutableStateFlow<String?>(null)
     val lastRegistrationError: StateFlow<String?> = _lastRegistrationError.asStateFlow()
 
+    /** Latest session-creation error from a [startSession] attempt.
+     *  Mirrors the typed [DeviceSessionError] description so the panel
+     *  can show "no eligible device found", "DAT app on glasses needs
+     *  update", etc — without that the start-session button silently
+     *  fails. */
+    private val _lastSessionError = MutableStateFlow<String?>(null)
+    val lastSessionError: StateFlow<String?> = _lastSessionError.asStateFlow()
+
     private val _events = MutableSharedFlow<GlassesEvent>(
         extraBufferCapacity = 8,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
@@ -188,13 +196,15 @@ object GlassesDatFacade {
             return true
         }
 
+        _lastSessionError.value = null
         var newSession: DeviceSession? = null
         Wearables.createSession(
             AutoDeviceSelector(filter = { it.isDisplayCapable() }),
         ).fold(
             onSuccess = { newSession = it },
             onFailure = { err, _ ->
-                Log.w(TAG, "createSession failed: ${err.description}")
+                Log.w(TAG, "createSession failed: ${err.name}: ${err.description}")
+                _lastSessionError.value = "${err.name}: ${err.description}"
             },
         )
         val s = newSession ?: return false

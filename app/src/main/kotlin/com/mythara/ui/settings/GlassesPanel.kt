@@ -65,6 +65,7 @@ fun GlassesPanel() {
     val ctx = LocalContext.current
     val state by GlassesDatFacade.connectionState.collectAsState()
     val regError by GlassesDatFacade.lastRegistrationError.collectAsState()
+    val sessionError by GlassesDatFacade.lastSessionError.collectAsState()
 
     // Runtime BLUETOOTH_CONNECT (API 31+) check + request. Without
     // this, every state path is moot — the SDK can't see anything.
@@ -195,6 +196,24 @@ fun GlassesPanel() {
                     color = MytharaColors.FgDim,
                     style = MaterialTheme.typography.bodySmall,
                 )
+                if (!sessionError.isNullOrBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "${Glyph.Dot} last attempt: $sessionError",
+                        color = MytharaColors.Mustard,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    if (sessionError!!.contains("NO_ELIGIBLE", ignoreCase = true)) {
+                        Text(
+                            text = "${Glyph.AccentBar} Likely cause: missing or invalid " +
+                                "mwdat_application_id / mwdat_client_token. Register an app at " +
+                                "https://wearables.developer.meta.com/, drop both values into " +
+                                "local.properties, then rebuild + reinstall Mythara.",
+                            color = MytharaColors.FgDim,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
