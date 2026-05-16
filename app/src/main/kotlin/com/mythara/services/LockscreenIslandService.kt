@@ -210,9 +210,24 @@ class LockscreenIslandService : Service() {
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+        // Overlay window height — FIXED at 400dp instead of
+        // WRAP_CONTENT. The teardrop drop-down menu (which appears
+        // when the user taps to expand the pill) grows the Compose
+        // content's measured size, but WRAP_CONTENT overlay
+        // windows don't reliably auto-reflow on Android 14+, so
+        // the teardrop content ends up rendered OUTSIDE the
+        // window's touch-capture bounds — making every launcher
+        // un-clickable. Pre-sizing the window tall enough to fit
+        // the expanded state keeps every menu icon inside the
+        // window's hit region. FLAG_NOT_TOUCH_MODAL still lets
+        // touches in the empty area between the circle / menu
+        // and the window edges fall through to the underlying
+        // app, so the dead-zone trade-off is bounded to the
+        // pill+menu footprint itself.
+        val overlayHeightPx = (400f * resources.displayMetrics.density).toInt()
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            overlayHeightPx,
             type,
             flags,
             PixelFormat.TRANSLUCENT,

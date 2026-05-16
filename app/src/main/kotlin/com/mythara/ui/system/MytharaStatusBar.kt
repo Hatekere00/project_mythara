@@ -409,6 +409,13 @@ fun MytharaStatusBar(
                 animationSpec = tween(EXPAND_DURATION_MS),
             ),
         ) {
+            // Wrap each callback so the teardrop collapses
+            // immediately after the user taps any launcher —
+            // otherwise the menu stays on screen blocking the
+            // destination the user just navigated to.
+            val collapseAfter: (() -> Unit) -> () -> Unit = { action ->
+                { expanded = false; action() }
+            }
             TeardropMenu(
                 nowFmt = nowFmt,
                 network = network,
@@ -416,13 +423,13 @@ fun MytharaStatusBar(
                 imageHealth = imageHealth,
                 batteryPct = battery.percent,
                 charging = battery.charging,
-                onOpenAboutMe = onOpenAboutMe,
-                onOpenPeople = onOpenPeople,
-                onOpenMemory = onOpenMemory,
-                onOpenTasks = onOpenTasks,
-                onOpenUsage = onOpenUsage,
-                onOpenSettings = onOpenSettings,
-                onOpenTriage = onOpenTriage,
+                onOpenAboutMe = collapseAfter(onOpenAboutMe),
+                onOpenPeople = collapseAfter(onOpenPeople),
+                onOpenMemory = collapseAfter(onOpenMemory),
+                onOpenTasks = collapseAfter(onOpenTasks),
+                onOpenUsage = collapseAfter(onOpenUsage),
+                onOpenSettings = collapseAfter(onOpenSettings),
+                onOpenTriage = collapseAfter(onOpenTriage),
             )
         }
     }

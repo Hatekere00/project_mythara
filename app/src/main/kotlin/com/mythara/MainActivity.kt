@@ -43,6 +43,18 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var voiceActions: VoiceActionStore
     private val appAuth = AppAuth()
     private var lastAuthError: String? = null
+    /**
+     * Compose-observable holder for the EXTRA_OPEN_ROUTE deep
+     * link the overlay's launcher icons push at us. Reading
+     * `intent.getStringExtra(...)` directly from setContent is a
+     * SNAPSHOT — onNewIntent updates `intent` but Compose won't
+     * recompose because the field isn't observable. A
+     * MutableState is. Updated by both onCreate (initial) and
+     * onNewIntent (re-launch), so every overlay tap on a
+     * launcher icon flows through to MytharaRoot's initialRoute
+     * LaunchedEffect.
+     */
+    private val pendingDeepLinkRoute = androidx.compose.runtime.mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
@@ -111,21 +123,18 @@ class MainActivity : FragmentActivity() {
             },
         )
 
-        // Deep-link route from the LockscreenIslandService overlay
-        // (e.g. Me-avatar tap → land on AboutMe). Mutable so an
-        // onNewIntent re-arrival can update it; rememberSaveable
-        // keeps the value across rotations until we've navigated.
+        // Seed the deep-link route from the launch intent. An
+        // onNewIntent re-arrival will update this same State so
+        // MytharaRoot.initialRoute recomposes + re-fires its
+        // LaunchedEffect to navigate.
+        pendingDeepLinkRoute.value = intent?.getStringExtra(
+            com.mythara.services.LockscreenIslandService.EXTRA_OPEN_ROUTE
+        )
         setContent {
             val windowSize = androidx.compose.material3.windowsizeclass.calculateWindowSizeClass(this)
-            // Pull the extra fresh on every recomposition so an
-            // onNewIntent that lands a new route triggers the
-            // MytharaRoot LaunchedEffect again.
-            val pendingRoute = intent?.getStringExtra(
-                com.mythara.services.LockscreenIslandService.EXTRA_OPEN_ROUTE
-            )
             MytharaRoot(
                 windowSize = windowSize,
-                initialRoute = pendingRoute,
+                initialRoute = pendingDeepLinkRoute.value,
                 onUnlockRequest = {
                     appAuth.authenticate(this, title = "Unlock Mythara") { result ->
                         when (result) {
@@ -174,6 +183,21 @@ class MainActivity : FragmentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleVoiceIntent(intent)
+        // Refresh the Compose-observable deep-link slot so the
+        // overlay's launcher-icon taps (which call
+        // startActivity with EXTRA_OPEN_ROUTE = <route>) flow
+        // through to MytharaRoot's initialRoute LaunchedEffect.
+        // Without this, intent gets setIntent'd but Compose
+        // doesn't see it.
+        val newRoute = intent.getStringExtra(
+            com.mythara.services.LockscreenIslandService.EXTRA_OPEN_ROUTE
+        )
+        // Force the value to update even if the new route is
+        // the same as the current value — MytharaRoot's
+        // LaunchedEffect keys on initialRoute so a no-change
+        // wouldn't fire. Toggle through null to force re-fire.
+        pendingDeepLinkRoute.value = null
+        pendingDeepLinkRoute.value = newRoute
     }
 
     private fun handleVoiceIntent(intent: Intent?) {
