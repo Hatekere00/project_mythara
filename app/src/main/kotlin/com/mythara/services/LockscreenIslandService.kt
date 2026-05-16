@@ -80,15 +80,20 @@ class LockscreenIslandService : Service() {
 
     private var windowManager: WindowManager? = null
     private var overlayView: View? = null
-    private val lifecycle = LifecycleRegistry(LifecycleOwnerImpl).also { it.currentState = androidx.lifecycle.Lifecycle.State.STARTED }
-    private val savedStateRegistryController = SavedStateRegistryController.create(SavedStateOwnerImpl)
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
-        savedStateRegistryController.performAttach()
-        savedStateRegistryController.performRestore(null)
+        // ComposeOwner's setup happens lazily in
+        // [ComposeOwner.ensureReady] — that path correctly
+        // sequences performAttach + performRestore BEFORE moving
+        // the lifecycle to RESUMED, which is what
+        // SavedStateRegistry's contract requires (the old in-
+        // class-init path called performAttach AFTER the apply
+        // block had already set the lifecycle to RESUMED →
+        // "Restarter must be created only during owner's
+        // initialization stage" crash).
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -100,7 +105,11 @@ class LockscreenIslandService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         removeOverlay()
-        lifecycle.currentState = androidx.lifecycle.Lifecycle.State.DESTROYED
+        // ComposeOwner is process-wide (singleton object) and may
+        // be reused if the service restarts. We deliberately don't
+        // tear its lifecycle down here — moving it to DESTROYED
+        // would break a subsequent restart of this service since
+        // SavedStateRegistry can't be re-attached.
     }
 
     /* ------------------------------------------------- foreground */
@@ -201,8 +210,12 @@ class LockscreenIslandService : Service() {
         // Compose-in-overlay-window plumbing: the ComposeView needs
         // a LifecycleOwner + SavedStateRegistryOwner attached via
         // ViewTree owners, otherwise it crashes on first frame.
-        view.setViewTreeLifecycleOwner(LifecycleOwnerImpl)
-        view.setViewTreeSavedStateRegistryOwner(SavedStateOwnerImpl)
+        // ComposeOwner.ensureReady() runs lazily on first access
+        // and sequences the SavedStateRegistry attach+restore
+        // before transitioning the lifecycle to RESUMED.
+        ComposeOwner.ensureReady()
+        view.setViewTreeLifecycleOwner(ComposeOwner)
+        view.setViewTreeSavedStateRegistryOwner(ComposeOwner)
 
         runCatching { wm.addView(view, params) }
             .onSuccess {
@@ -220,26 +233,43 @@ class LockscreenIslandService : Service() {
         windowManager = null
     }
 
-    /* --- Compose hosting glue: minimal LifecycleOwner + SavedStateOwner --- */
+    /* --- Compose hosting glue: single LifecycleOwner + SavedStateOwner ---
+     *
+     * SavedStateRegistry's contract: performAttach() and
+     * performRestore() MUST be called while the lifecycle is in
+     * the INITIALIZED state. The previous version's `apply` block
+     * was setting `currentState = RESUMED` BEFORE the
+     * SavedStateRegistryController had been attached, which
+     * threw "Restarter must be created only during owner's
+     * initialization stage" the first time anything touched the
+     * object.
+     *
+     * Fix: lazy init under a one-shot flag. ensureReady() runs
+     * the attach+restore while the lifecycle is still INITIALIZED,
+     * then promotes to RESUMED in a single pass. Idempotent —
+     * subsequent calls no-op.
+     */
+    private object ComposeOwner : LifecycleOwner, SavedStateRegistryOwner {
+        private val reg = LifecycleRegistry(this)
+        private val ssrc = SavedStateRegistryController.create(this)
+        @Volatile private var initialized = false
 
-    private object LifecycleOwnerImpl : LifecycleOwner, SavedStateRegistryOwner {
-        private val reg = LifecycleRegistry(this).apply {
-            currentState = androidx.lifecycle.Lifecycle.State.RESUMED
+        fun ensureReady() {
+            if (initialized) return
+            synchronized(this) {
+                if (initialized) return
+                // 1) lifecycle is INITIALIZED by default; attach
+                //    + restore the SavedStateRegistry now.
+                ssrc.performAttach()
+                ssrc.performRestore(null)
+                // 2) Now promote through CREATED → STARTED →
+                //    RESUMED so Compose's ViewTreeLifecycleOwner
+                //    sees a fully-resumed lifecycle on first paint.
+                reg.currentState = androidx.lifecycle.Lifecycle.State.RESUMED
+                initialized = true
+            }
         }
-        private val ssrc = SavedStateRegistryController.create(this).apply {
-            performAttach(); performRestore(null)
-        }
-        override val lifecycle: androidx.lifecycle.Lifecycle get() = reg
-        override val savedStateRegistry: SavedStateRegistry get() = ssrc.savedStateRegistry
-    }
 
-    private object SavedStateOwnerImpl : SavedStateRegistryOwner {
-        private val reg = LifecycleRegistry(this).apply {
-            currentState = androidx.lifecycle.Lifecycle.State.RESUMED
-        }
-        private val ssrc = SavedStateRegistryController.create(this).apply {
-            performAttach(); performRestore(null)
-        }
         override val lifecycle: androidx.lifecycle.Lifecycle get() = reg
         override val savedStateRegistry: SavedStateRegistry get() = ssrc.savedStateRegistry
     }
@@ -256,14 +286,24 @@ class LockscreenIslandService : Service() {
             Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
                 Settings.canDrawOverlays(ctx)
 
-        /** Idempotent start. Caller should gate on [canRender]. */
+        /** Idempotent start. Caller should gate on [canRender].
+         *
+         *  Wrapped in runCatching because Android 12+ throws
+         *  [android.app.ForegroundServiceStartNotAllowedException]
+         *  when the caller is in BG context (e.g. Application.
+         *  onCreate, or any non-foreground startup). The right
+         *  fix is to call from an Activity, but a stray BG call
+         *  shouldn't crash the whole app — silently skipping the
+         *  overlay is preferable to taking the process down. */
         fun start(ctx: Context) {
-            val intent = Intent(ctx, LockscreenIslandService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                ctx.startForegroundService(intent)
-            } else {
-                ctx.startService(intent)
-            }
+            runCatching {
+                val intent = Intent(ctx, LockscreenIslandService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    ctx.startForegroundService(intent)
+                } else {
+                    ctx.startService(intent)
+                }
+            }.onFailure { Log.w(TAG, "FGS start failed (likely BG-start restriction): ${it.message}") }
         }
 
         fun stop(ctx: Context) {

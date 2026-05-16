@@ -75,6 +75,18 @@ class MainActivity : FragmentActivity() {
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         controller.hide(WindowInsetsCompat.Type.statusBars())
+        // Lock-screen Dynamic Island overlay. Started from
+        // Activity.onCreate (not Application.onCreate) because
+        // Android 12+ throws ForegroundServiceStartNotAllowedException
+        // when an FGS is launched from BG context — Application.
+        // onCreate runs in BG per the lifecycle rules even though
+        // we're booting our own process. Activity.onCreate IS a
+        // foreground entry → FGS start is allowed.
+        // Self-gates on canRender so it no-ops when the user
+        // hasn't granted SYSTEM_ALERT_WINDOW yet.
+        if (com.mythara.services.LockscreenIslandService.canRender(this)) {
+            com.mythara.services.LockscreenIslandService.start(this)
+        }
         // Pixel Buds touch-and-hold (and any other "open the digital
         // assistant" gesture, e.g. squeeze-to-assist, swipe-up assist
         // gesture) delivers MainActivity an ACTION_ASSIST intent when
