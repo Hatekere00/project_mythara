@@ -17,12 +17,15 @@ import com.meta.wearable.dat.core.selectors.AutoDeviceSelector
 import com.meta.wearable.dat.core.selectors.SpecificDeviceSelector
 import com.meta.wearable.dat.core.session.DeviceSession
 import com.meta.wearable.dat.core.session.DeviceSessionState
+import com.meta.wearable.dat.core.types.Device
+import com.meta.wearable.dat.core.types.DeviceCompatibility
 import com.meta.wearable.dat.core.types.DeviceIdentifier
 import com.meta.wearable.dat.core.types.DeviceSessionError
 import com.meta.wearable.dat.core.types.LinkState
 import com.meta.wearable.dat.core.types.Permission
 import com.meta.wearable.dat.core.types.PermissionStatus
 import com.meta.wearable.dat.core.types.RegistrationState
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.withTimeoutOrNull
 import com.meta.wearable.dat.display.Display
 import com.meta.wearable.dat.display.addDisplay
@@ -144,6 +147,33 @@ object GlassesDatFacade {
     private val _microphonePermission = MutableStateFlow(DatPermission.Unknown)
     val microphonePermission: StateFlow<DatPermission> = _microphonePermission.asStateFlow()
 
+    /** Live snapshot of every device the SDK currently sees, with the
+     *  full per-device metadata (name, firmware, link state, display-
+     *  capability, compatibility). Used by the panel as the canonical
+     *  "what does the SDK actually see right now" diagnostic. */
+    data class GlassesDeviceInfo(
+        val id: String,
+        val name: String,
+        val firmware: String,
+        val linkState: String,
+        val displayCapable: Boolean,
+        val compatibility: String,
+    )
+    private val _discoveredDevices = MutableStateFlow<List<GlassesDeviceInfo>>(emptyList())
+    val discoveredDevices: StateFlow<List<GlassesDeviceInfo>> = _discoveredDevices.asStateFlow()
+
+    /** True when at least one discovered device reports
+     *  [DeviceCompatibility.DEVICE_UPDATE_REQUIRED]. The panel uses
+     *  this to surface an "update glasses firmware" button that calls
+     *  [openFirmwareUpdate]. Distinct from the DAT app update (which
+     *  is the user-space runtime on the glasses); firmware is the
+     *  underlying device OS / hardware bridge. */
+    private val _firmwareUpdateRequired = MutableStateFlow(false)
+    val firmwareUpdateRequired: StateFlow<Boolean> = _firmwareUpdateRequired.asStateFlow()
+
+    private var devicesJob: Job? = null
+    private var perDeviceMetadataJobs = mutableMapOf<DeviceIdentifier, Job>()
+
     private val _events = MutableSharedFlow<GlassesEvent>(
         extraBufferCapacity = 8,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
@@ -218,6 +248,16 @@ object GlassesDatFacade {
         // Optimistically clear the flag — if it's still required after
         // the user returns, the next startSession attempt will re-flip it.
         _glassesAppUpdateRequired.value = false
+    }
+
+    /** Launch Stella's firmware-update flow for the glasses hardware
+     *  itself. Distinct from openDATGlassesAppUpdate — that updates
+     *  the DAT user-space runtime, this updates the underlying device
+     *  OS. Used when any device reports
+     *  [DeviceCompatibility.DEVICE_UPDATE_REQUIRED]. */
+    suspend fun openFirmwareUpdate(activity: Activity) {
+        runCatching { Wearables.openFirmwareUpdate(activity) }
+            .onFailure { Log.w(TAG, "openFirmwareUpdate threw: ${it.message}") }
     }
 
     /** Re-query both DAT-side permissions and mirror into the state
@@ -494,6 +534,56 @@ object GlassesDatFacade {
         _events.tryEmit(event)
     }
 
+    /** Subscribe to `Wearables.devices` + each device's metadata flow
+     *  so the panel's diagnostic view + the firmware-update flag stay
+     *  live. Idempotent — cancels old subscriptions before re-binding. */
+    private fun startObservingDevices() {
+        devicesJob?.cancel()
+        perDeviceMetadataJobs.values.forEach { it.cancel() }
+        perDeviceMetadataJobs.clear()
+        // Reset cached snapshot — gets rebuilt from the new subscriptions.
+        val cache = mutableMapOf<DeviceIdentifier, GlassesDeviceInfo>()
+        devicesJob = scope.launch {
+            Wearables.devices.collect { ids ->
+                // Stop watching devices that vanished.
+                val gone = perDeviceMetadataJobs.keys - ids
+                gone.forEach { id ->
+                    perDeviceMetadataJobs.remove(id)?.cancel()
+                    cache.remove(id)
+                }
+                // Start watching newly discovered devices.
+                ids.forEach { id ->
+                    if (id !in perDeviceMetadataJobs) {
+                        perDeviceMetadataJobs[id] = scope.launch {
+                            Wearables.devicesMetadata[id]?.collect { d: Device ->
+                                cache[id] = GlassesDeviceInfo(
+                                    id = id.toString(),
+                                    name = d.name,
+                                    firmware = d.firmwareInfo ?: "unknown",
+                                    linkState = d.linkState.name,
+                                    displayCapable = d.isDisplayCapable(),
+                                    compatibility = d.compatibility.name,
+                                )
+                                _discoveredDevices.value = cache.values.toList()
+                                _firmwareUpdateRequired.value = cache.values.any {
+                                    it.compatibility == DeviceCompatibility.DEVICE_UPDATE_REQUIRED.name
+                                }
+                                Log.d(
+                                    TAG,
+                                    "device metadata: ${d.name} fw=${d.firmwareInfo} " +
+                                        "link=${d.linkState} displayCapable=${d.isDisplayCapable()} " +
+                                        "compat=${d.compatibility}",
+                                )
+                            }
+                        }
+                    }
+                }
+                _discoveredDevices.value = cache.values.toList()
+                if (cache.isEmpty()) _firmwareUpdateRequired.value = false
+            }
+        }
+    }
+
     private fun observeRegistration() {
         registrationJob?.cancel()
         registrationJob = scope.launch {
@@ -509,9 +599,12 @@ object GlassesDatFacade {
                 }
                 // Once REGISTERED, do an initial camera-permission probe
                 // so the panel can surface the "grant glasses camera"
-                // button without waiting for a failed session attempt.
+                // button without waiting for a failed session attempt,
+                // and start observing the per-device metadata stream so
+                // the panel can show "device says firmware update needed".
                 if (state == RegistrationState.REGISTERED) {
                     runCatching { refreshCameraPermission() }
+                    startObservingDevices()
                 }
             }
         }

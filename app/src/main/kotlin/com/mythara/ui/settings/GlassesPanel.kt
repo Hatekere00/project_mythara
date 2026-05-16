@@ -74,6 +74,8 @@ fun GlassesPanel() {
     val needsGlassesAppUpdate by GlassesDatFacade.glassesAppUpdateRequired.collectAsState()
     val cameraPerm by GlassesDatFacade.cameraPermission.collectAsState()
     val micPerm by GlassesDatFacade.microphonePermission.collectAsState()
+    val discoveredDevices by GlassesDatFacade.discoveredDevices.collectAsState()
+    val needsFirmwareUpdate by GlassesDatFacade.firmwareUpdateRequired.collectAsState()
     val coroutineScope = rememberCoroutineScope()
 
     // DAT-side permission launchers — wrap Stella's per-permission UI
@@ -254,7 +256,29 @@ fun GlassesPanel() {
                         )
                     }
                 }
-                if (missingPerm != null && !needsGlassesAppUpdate) {
+                if (discoveredDevices.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    discoveredDevices.forEach { d ->
+                        Text(
+                            text = "${Glyph.Dot} ${d.name} · fw ${d.firmware} · " +
+                                "${d.linkState} · displayCapable=${d.displayCapable} · " +
+                                "compat=${d.compatibility}",
+                            color = if (d.compatibility == "COMPATIBLE") MytharaColors.Bok
+                                else MytharaColors.Mustard,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+                if (needsFirmwareUpdate) {
+                    Text(
+                        text = "${Glyph.AccentBar} A device reports DEVICE_UPDATE_REQUIRED — the " +
+                            "glasses firmware (not the DAT app) is out of date. Tap below to launch " +
+                            "Stella's firmware-update flow.",
+                        color = MytharaColors.FgDim,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                if (missingPerm != null && !needsGlassesAppUpdate && !needsFirmwareUpdate) {
                     Spacer(Modifier.height(6.dp))
                     Text(
                         text = "${Glyph.Dot} dat permissions — camera: ${cameraPerm.name}, " +
@@ -287,6 +311,19 @@ fun GlassesPanel() {
                                 contentColor = MytharaColors.Bg,
                             ),
                         ) { Text("update glasses app") }
+                        needsFirmwareUpdate -> Button(
+                            onClick = {
+                                (ctx as? Activity)?.let { act ->
+                                    coroutineScope.launch {
+                                        GlassesDatFacade.openFirmwareUpdate(act)
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MytharaColors.Charple,
+                                contentColor = MytharaColors.Bg,
+                            ),
+                        ) { Text("update glasses firmware") }
                         missingPerm != null -> Button(
                             onClick = { datPermLauncher.launch(missingPerm) },
                             colors = ButtonDefaults.buttonColors(
@@ -376,6 +413,19 @@ fun GlassesPanel() {
                                 contentColor = MytharaColors.Bg,
                             ),
                         ) { Text("update glasses app") }
+                        needsFirmwareUpdate -> Button(
+                            onClick = {
+                                (ctx as? Activity)?.let { act ->
+                                    coroutineScope.launch {
+                                        GlassesDatFacade.openFirmwareUpdate(act)
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MytharaColors.Charple,
+                                contentColor = MytharaColors.Bg,
+                            ),
+                        ) { Text("update glasses firmware") }
                         missingPerm != null -> Button(
                             onClick = { datPermLauncher.launch(missingPerm) },
                             colors = ButtonDefaults.buttonColors(
