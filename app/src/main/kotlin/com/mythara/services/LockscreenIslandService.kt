@@ -206,10 +206,22 @@ class LockscreenIslandService : Service() {
         // lets touches OUTSIDE the window's bounds fall through
         // to the underlying app — so scrolling Reddit while
         // the overlay floats above still works.
+        //
+        // FLAG_ALT_FOCUSABLE_IM is critical: the overlay window
+        // is focusable for TOUCH (so taps register on the pill),
+        // but this flag tells the IME (soft keyboard) to NOT bind
+        // to this window. Without it, every TextField tap in the
+        // host activity tries to attach the IME to the overlay
+        // window instead — symptom: keyboard never comes up when
+        // the user taps a text input anywhere in Mythara. With
+        // ALT_FOCUSABLE_IM the IME ignores the overlay entirely
+        // and attaches to MainActivity's window where the focused
+        // EditText / TextField actually lives.
         val flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-            WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+            WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+            WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM
         // Overlay window height starts SMALL — just enough for
         // the collapsed circle (+ its safeTopDp top inset).
         // 130dp covers safeTopDp (60dp) + pill height (45dp) +
