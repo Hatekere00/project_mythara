@@ -176,6 +176,17 @@ class AgentLoop @Inject constructor(
             android.util.Log.d(TAG, "injecting mood: current=$currentMood trend=$moodTrend")
             ChatMessage(role = "system", content = rendered)
         }
+        // Live-persona context — dispositional tilts + active
+        // concerns + top values from the PersonaTraitExtractor
+        // records. Peer to moodSystem: mood shapes TONE, this
+        // shapes FRAMING. Both injected on every turn so the
+        // model never has to ask "what kind of person is this".
+        val livePersonaSystem: ChatMessage? = runCatching {
+            recall.renderLivePersonaSystemMessage()
+        }.getOrNull()?.let { rendered ->
+            android.util.Log.d(TAG, "injecting live persona context (${rendered.length} chars)")
+            ChatMessage(role = "system", content = rendered)
+        }
         // Final mood for downstream prosody (TTS pitch/rate, EL voice
         // settings). currentMood wins when present.
         val effectiveMood = currentMood ?: moodTrend
@@ -556,6 +567,7 @@ class AgentLoop @Inject constructor(
                 add(voiceSystem) // ALWAYS — conversational style default
                 if (ttsSystem != null) add(ttsSystem)
                 if (moodSystem != null) add(moodSystem)
+                if (livePersonaSystem != null) add(livePersonaSystem)
                 if (autoReplySystem != null) add(autoReplySystem)
                 if (autoTriageSystem != null) add(autoTriageSystem)
                 if (notifSystem != null) add(notifSystem)

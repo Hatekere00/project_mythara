@@ -344,6 +344,116 @@ class SemanticRecall @Inject constructor(
         else -> "Lean toward $mood in tone but stay yourself."
     }
 
+    /**
+     * Render a "live-persona" system-prompt addendum drawn from the
+     * per-turn PersonaTraitExtractor records — what the user is
+     * concerned about, which Big Five dimensions they're leaning,
+     * and what they value. Distinct from [renderMoodSystemMessage]
+     * (current emotional state) — this one is dispositional /
+     * thematic context that informs how the model FRAMES its
+     * reply, not just its tone.
+     *
+     * Returns null when the vault has no live-persona records
+     * (fresh install, no chats yet).
+     */
+    suspend fun renderLivePersonaSystemMessage(): String? {
+        if (!isEnabled()) return null
+        val recent = runCatching {
+            vault.listByTier(Tier.Semantic, limit = 300)
+        }.getOrDefault(emptyList())
+            .filter { entity ->
+                val facets = vault.decodeFacets(entity)
+                "kind:trait" in facets && "target:self" in facets
+            }
+        if (recent.isEmpty()) return null
+
+        // Bucket by dimension, pull top signals.
+        val concerns = recent
+            .filter { entity ->
+                val f = vault.decodeFacets(entity)
+                "dim:concern" in f
+            }
+            .flatMap { entity ->
+                vault.decodeFacets(entity)
+                    .filter { it.startsWith("topic:") }
+                    .map { it.removePrefix("topic:") to entity.seen }
+            }
+            .groupBy({ it.first }, { it.second })
+            .mapValues { (_, seens) -> seens.sum() }
+            .entries.sortedByDescending { it.value }
+            .take(3)
+            .map { it.key }
+
+        data class Big5Tilt(val trait: String, val polarity: String, val score: Int)
+        val big5 = recent
+            .filter { entity ->
+                val f = vault.decodeFacets(entity)
+                "dim:big5" in f
+            }
+            .let { rows ->
+                val buckets = mutableMapOf<String, Int>()
+                for (row in rows) {
+                    val facets = vault.decodeFacets(row)
+                    val trait = facets.firstOrNull { it.startsWith("trait:") }
+                        ?.removePrefix("trait:") ?: continue
+                    val polarity = facets.firstOrNull { it.startsWith("polarity:") }
+                        ?.removePrefix("polarity:") ?: continue
+                    val sign = if (polarity == "high") 1 else if (polarity == "low") -1 else 0
+                    buckets[trait] = (buckets[trait] ?: 0) + sign * row.seen.coerceAtLeast(1)
+                }
+                buckets.entries
+                    .map { (t, s) ->
+                        Big5Tilt(
+                            trait = t,
+                            polarity = if (s > 0) "high" else "low",
+                            score = kotlin.math.abs(s),
+                        )
+                    }
+                    .filter { it.score >= 2 }
+                    .sortedByDescending { it.score }
+                    .take(2)
+            }
+
+        val values = recent
+            .filter { entity ->
+                val f = vault.decodeFacets(entity)
+                "dim:values" in f
+            }
+            .flatMap { entity ->
+                vault.decodeFacets(entity)
+                    .filter { it.startsWith("value:") }
+                    .map { it.removePrefix("value:") to entity.seen }
+            }
+            .groupBy({ it.first }, { it.second })
+            .mapValues { (_, seens) -> seens.sum() }
+            .entries.sortedByDescending { it.value }
+            .take(3)
+            .map { it.key }
+
+        if (concerns.isEmpty() && big5.isEmpty() && values.isEmpty()) return null
+
+        val sb = StringBuilder()
+        sb.append("LIVE PERSONA — what I've learned about the user from prior chats. ")
+        sb.append("Use this as background colour, not as something to mention by name. ")
+        sb.append("The user has NOT explicitly told you any of this in the current conversation — ")
+        sb.append("if you reference it, do so as if you just intuited it from context.")
+        if (big5.isNotEmpty()) {
+            sb.append("\n• Dispositional tilts: ")
+            sb.append(big5.joinToString(", ") { "${it.polarity} ${it.trait}" })
+            sb.append(". Let this shape framing — high-neuroticism users need shorter / more concrete; ")
+            sb.append("high-openness users handle novel ideas / metaphors; low-agreeableness needs less softening.")
+        }
+        if (values.isNotEmpty()) {
+            sb.append("\n• Top values: ").append(values.joinToString(", "))
+            sb.append(". When you can anchor an answer to one of these, do.")
+        }
+        if (concerns.isNotEmpty()) {
+            sb.append("\n• Currently on their mind: ").append(concerns.joinToString(", "))
+            sb.append(". If this turn's topic intersects, lean in. If not, don't dredge it up.")
+        }
+        return sb.toString()
+    }
+
     companion object {
         private const val TAG = "Mythara/Recall"
 
