@@ -91,6 +91,7 @@ object GlassesDatFacade {
     private var display: Display? = null
 
     private var registrationJob: Job? = null
+    private var registrationErrorJob: Job? = null
     private var sessionStateJob: Job? = null
     private var sessionErrorJob: Job? = null
     private var streamStateJob: Job? = null
@@ -98,6 +99,13 @@ object GlassesDatFacade {
 
     private val _connectionState = MutableStateFlow(GlassesConnectionState.NotInitialized)
     val connectionState: StateFlow<GlassesConnectionState> = _connectionState.asStateFlow()
+
+    /** Latest registration-side error description (or null if none).
+     *  The panel surfaces this verbatim so the user sees the SDK's
+     *  actual complaint — e.g. "Meta AI app not installed",
+     *  "INCOMPATIBLE_SDK_LEVEL". */
+    private val _lastRegistrationError = MutableStateFlow<String?>(null)
+    val lastRegistrationError: StateFlow<String?> = _lastRegistrationError.asStateFlow()
 
     private val _events = MutableSharedFlow<GlassesEvent>(
         extraBufferCapacity = 8,
@@ -108,14 +116,25 @@ object GlassesDatFacade {
     fun isAvailable(): Boolean = initializedOnce
 
     /** Force a re-initialize after a runtime permission grant
-     *  (BLUETOOTH_CONNECT). The DAT SDK builds its provider observers
-     *  during [initializeIfAvailable]; if BT_CONNECT was missing at
-     *  that point, the registration-state collector never wires up
-     *  correctly and stays at UNAVAILABLE even after the permission
-     *  flips. Calling this forces a fresh init. */
+     *  (BLUETOOTH_CONNECT) or after the user installs/launches the
+     *  Meta companion app. The DAT SDK builds its provider observers
+     *  during [initializeIfAvailable]; if BT_CONNECT was missing or
+     *  the companion app wasn't reachable at init time, the
+     *  registration-state collector never wires up correctly and
+     *  stays at UNAVAILABLE even after the underlying condition
+     *  flips. We call `Wearables.reset()` first so the SDK drops its
+     *  own internal "already initialized" guard — without this, the
+     *  subsequent `Wearables.initialize` fails with "Wearables has
+     *  been already initialized" and the SDK keeps using the broken
+     *  observers from the first attempt. */
     fun reinitialize(context: Context) {
+        runCatching { Wearables.reset() }
+            .onFailure { Log.w(TAG, "Wearables.reset threw: ${it.message}") }
         initializedOnce = false
         registrationJob?.cancel(); registrationJob = null
+        registrationErrorJob?.cancel(); registrationErrorJob = null
+        _lastRegistrationError.value = null
+        _connectionState.value = GlassesConnectionState.NotInitialized
         initializeIfAvailable(context)
     }
 
@@ -337,7 +356,7 @@ object GlassesDatFacade {
         registrationJob?.cancel()
         registrationJob = scope.launch {
             Wearables.registrationState.collect { state ->
-                Log.d(TAG, "registrationState -> $state")
+                Log.d(TAG, "registrationState -> $state (devMode=${runCatching { Wearables.isDevMode }.getOrNull()})")
                 _connectionState.value = when (state) {
                     RegistrationState.REGISTERED -> GlassesConnectionState.Paired
                     RegistrationState.AVAILABLE -> GlassesConnectionState.Initialized
@@ -346,6 +365,19 @@ object GlassesDatFacade {
                     RegistrationState.REGISTERING -> _connectionState.value
                     else -> _connectionState.value
                 }
+            }
+        }
+        registrationErrorJob?.cancel()
+        registrationErrorJob = scope.launch {
+            // The SDK funnels every registration-side failure (Meta AI
+            // not installed, incompatible version, failed registration,
+            // etc.) through this Flow. We mirror the description into
+            // [lastRegistrationError] so the panel can show the user
+            // exactly WHY pairing isn't working — instead of just a
+            // generic NotInitialized.
+            Wearables.registrationErrorStream.collect { err ->
+                Log.w(TAG, "registrationError -> ${err.name}: ${err.description}")
+                _lastRegistrationError.value = "${err.name}: ${err.description}"
             }
         }
     }

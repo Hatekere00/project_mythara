@@ -64,6 +64,7 @@ import com.mythara.ui.theme.MytharaColors
 fun GlassesPanel() {
     val ctx = LocalContext.current
     val state by GlassesDatFacade.connectionState.collectAsState()
+    val regError by GlassesDatFacade.lastRegistrationError.collectAsState()
 
     // Runtime BLUETOOTH_CONNECT (API 31+) check + request. Without
     // this, every state path is moot — the SDK can't see anything.
@@ -143,12 +144,22 @@ fun GlassesPanel() {
         when (state) {
             GlassesConnectionState.NotInitialized -> {
                 Text(
-                    text = "${Glyph.AccentBar} The Meta companion app (Stella / Meta AI) is not " +
-                        "reachable. Confirm it's installed, signed in, and the glasses appear " +
-                        "in its device list. Then tap retry.",
+                    text = "${Glyph.AccentBar} The Meta companion app (Stella) reports the SDK as " +
+                        "UNAVAILABLE. The most common cause is that Developer Mode isn't enabled in " +
+                        "Stella — open the Stella app → Settings → About → tap the version 5× to " +
+                        "expose the developer menu, then enable it. Confirm the glasses appear in " +
+                        "Stella's device list, then tap retry.",
                     color = MytharaColors.FgDim,
                     style = MaterialTheme.typography.bodySmall,
                 )
+                if (!regError.isNullOrBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "${Glyph.Dot} sdk reports: $regError",
+                        color = MytharaColors.Mustard,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
                 Button(
                     onClick = { GlassesDatFacade.reinitialize(ctx) },
