@@ -207,7 +207,7 @@ private fun TimelineGridBody(vm: TimelineGridViewModel = hiltViewModel()) {
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = "${Glyph.CircleOutline} nothing here yet — take a photo, or let a day pass and Lumi will log it",
+                        text = "${Glyph.CircleOutline} nothing here yet — take a photo, or let a day pass and Mythara will log it",
                         color = MytharaColors.FgDim,
                         style = MaterialTheme.typography.bodySmall,
                     )

@@ -19,7 +19,7 @@ import javax.inject.Singleton
 /**
  * Four tools that together implement self-evolving skills:
  *
- *  - [ListSkillsTool] — what skills does Lumi know?
+ *  - [ListSkillsTool] — what skills does Mythara know?
  *  - [GetSkillTool]   — pull the JSON of a specific skill (incl. failures)
  *  - [SaveSkillTool]  — write a new (or refined) skill from a JSON blob
  *  - [RunSkillTool]   — execute a skill with named params
@@ -236,7 +236,7 @@ class RunSkillTool @Inject constructor(
             id = "",
             toolName = this.name,
             title = "Run skill '$name'?",
-            body = "Lumi will drive other apps on your behalf — tap, type, swipe. Confirm to allow.",
+            body = "Mythara will drive other apps on your behalf — tap, type, swipe. Confirm to allow.",
             allowlistKey = "run_skill:$name",
         )
     }

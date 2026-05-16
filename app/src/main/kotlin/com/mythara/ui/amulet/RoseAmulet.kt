@@ -69,6 +69,28 @@ fun RoseAmulet(
     onSwipeUp: () -> Unit = {},
     onSwipeLeft: () -> Unit = {},
     onSwipeRight: () -> Unit = {},
+    /**
+     * PTT (push-to-talk) gesture — press-and-hold the rose.
+     *
+     * Fires `(true, 0)` once the user has been pressing the rose
+     * for at least [PTT_THRESHOLD_MS] (250 ms by default). The host
+     * starts mic capture at that point.
+     *
+     * Fires `(false, durationMs)` on release OR when the press
+     * lasts long enough to elevate to [onLongPress] (≥800 ms).
+     * `durationMs` is the total press duration from down to release;
+     * the host can use it to decide whether the captured PCM is
+     * worth submitting (e.g. drop sub-250 ms blips that elevated to
+     * PTT then released immediately).
+     *
+     * Also fires `(false, 0)` when a swipe gesture interrupts the
+     * press, so the host can cancel mic capture cleanly.
+     *
+     * This is additive — the existing `onTap` / `onLongPress` /
+     * `onSwipeUp` callbacks all continue to fire normally. Hosts
+     * that don't want PTT can pass the default no-op.
+     */
+    onPttHoldChange: (isHolding: Boolean, durationMs: Long) -> Unit = { _, _ -> },
 ) {
     val density = LocalDensity.current
     val swipeUpThresholdPx = with(density) { SWIPE_UP_DP.dp.toPx() }
@@ -139,9 +161,9 @@ fun RoseAmulet(
                     onLongPress = { onLongPress() },
                 )
             }
-            // Swipe + triple-tap detector. Lives in the same
-            // pointerInput so we can correlate "no movement" → tap
-            // vs "movement past threshold" → swipe.
+            // Swipe + triple-tap + PTT-hold detector. Lives in the
+            // same pointerInput so we can correlate the same down
+            // event across all three gestures.
             .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
@@ -149,13 +171,30 @@ fun RoseAmulet(
                     var totalDx = 0f
                     var totalDy = 0f
                     var swipeFired = false
+                    var pttHolding = false
                     while (true) {
                         val event = awaitPointerEvent(pass = PointerEventPass.Initial)
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        val held = System.currentTimeMillis() - downTime
+                        // PTT cross-threshold: still pressed, no swipe
+                        // fired, held >= 250 ms. Fire once.
+                        if (!pttHolding && !swipeFired && change.pressed && held >= PTT_THRESHOLD_MS) {
+                            pttHolding = true
+                            onPttHoldChange(true, 0L)
+                        }
                         if (!change.pressed) {
-                            // Up — if no swipe fired, it's a tap; record
-                            // the time and decide single vs triple.
-                            if (!swipeFired) {
+                            val totalHeld = System.currentTimeMillis() - downTime
+                            // If we were in PTT mode, end it.
+                            if (pttHolding) {
+                                onPttHoldChange(false, totalHeld)
+                            }
+                            // Up — if no swipe fired AND no PTT was
+                            // captured (i.e. quick tap before threshold),
+                            // it's a tap; record the time and decide
+                            // single vs triple. If PTT was captured,
+                            // the host already handled it and we
+                            // suppress the tap to avoid double-fire.
+                            if (!swipeFired && !pttHolding) {
                                 val now = System.currentTimeMillis()
                                 val recent = tapTimes.filter { now - it <= TRIPLE_TAP_WINDOW_MS }
                                 val updated = (recent + now).takeLast(3).toLongArray()
@@ -179,9 +218,18 @@ fun RoseAmulet(
                             // (constellation reveal) is swipe-up.
                             if (totalDy < -swipeUpThresholdPx) {
                                 swipeFired = true
+                                // Swipe interrupts PTT — cancel.
+                                if (pttHolding) {
+                                    pttHolding = false
+                                    onPttHoldChange(false, 0L)
+                                }
                                 onSwipeUp()
                             } else if (abs(totalDx) > swipeHorizThresholdPx && abs(totalDx) > abs(totalDy)) {
                                 swipeFired = true
+                                if (pttHolding) {
+                                    pttHolding = false
+                                    onPttHoldChange(false, 0L)
+                                }
                                 if (totalDx > 0) onSwipeRight() else onSwipeLeft()
                             }
                         }
@@ -267,6 +315,18 @@ private const val SWIPE_HORIZ_DP = 80
  *  unlock" triple-tap. 800 ms is comfortable for a deliberate
  *  triple-tap without being slow enough to merge unrelated taps. */
 private const val TRIPLE_TAP_WINDOW_MS = 800L
+
+/** How long the user must keep their finger on the rose before we
+ *  treat the press as PTT (push-to-talk). 250 ms is short enough
+ *  that "press and start speaking" feels immediate, yet long enough
+ *  that a quick tap (which should fire `onTap`) won't accidentally
+ *  trigger PTT.
+ *
+ *  Long-press (`onLongPress`) fires from a separate detector at the
+ *  Android default (~500 ms). Hosts that want PTT-only and don't
+ *  want a long-press wheel should leave `onLongPress` as the
+ *  no-op default. */
+private const val PTT_THRESHOLD_MS = 250L
 
 /** Mirrors WallpaperRenderer.effectivePulseHz: bpm/300 clamped
  *  [DEFAULT_PULSE_HZ, MAX_PULSE_HZ], or DEFAULT when no fresh HR. */

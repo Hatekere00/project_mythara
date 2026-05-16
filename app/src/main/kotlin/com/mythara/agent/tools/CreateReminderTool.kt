@@ -32,7 +32,7 @@ import javax.inject.Singleton
 
 /**
  * `create_reminder` — set a reminder that fires a notification + a
- * spoken announcement from Lumi on THIS device at the scheduled time,
+ * spoken announcement from Mythara on THIS device at the scheduled time,
  * and shows as a card in the chat timeline.
  *
  * This is the tool to reach for whenever the user says "remind me…".
@@ -42,7 +42,7 @@ import javax.inject.Singleton
  *
  * Time resolution:
  *  - When `at_epoch_ms` is given, the reminder fires exactly then.
- *  - When it's omitted, Lumi picks the time AUTOMATICALLY from calendar
+ *  - When it's omitted, Mythara picks the time AUTOMATICALLY from calendar
  *    availability — it reads upcoming events across every linked
  *    calendar (Google / Outlook / Exchange / local) and schedules the
  *    reminder in the next free slot within waking hours, so it never
@@ -60,10 +60,10 @@ class CreateReminderTool @Inject constructor(
     override val name: String = "create_reminder"
     override val description: String =
         "Set a reminder for the user — use this whenever the user says 'remind me…'. " +
-            "The reminder fires a notification + a spoken announcement from Lumi on this device at the scheduled " +
+            "The reminder fires a notification + a spoken announcement from Mythara on this device at the scheduled " +
             "time, and shows as a card in the chat timeline. " +
             "Provide at_epoch_ms ONLY when the user named a specific time (resolve relative times like 'tomorrow 3pm' " +
-            "with the time tool first). OMIT at_epoch_ms to let Lumi auto-pick the time from the user's calendar " +
+            "with the time tool first). OMIT at_epoch_ms to let Mythara auto-pick the time from the user's calendar " +
             "availability — it reads every linked calendar and schedules the reminder in the next free slot within " +
             "waking hours so it won't clash with a meeting. " +
             "For RECURRING reminders ('every day at 9am', 'every Mon/Wed/Fri at 6:30pm', 'every 2 hours') pass " +
@@ -100,7 +100,7 @@ class CreateReminderTool @Inject constructor(
                         put("type", "integer")
                         put(
                             "description",
-                            "Exact fire time as Unix epoch millis. OMIT to let Lumi auto-pick from calendar availability.",
+                            "Exact fire time as Unix epoch millis. OMIT to let Mythara auto-pick from calendar availability.",
                         )
                     },
                 )
@@ -234,7 +234,7 @@ class CreateReminderTool @Inject constructor(
                     } else {
                         append("Reminder set for ").append(human).append(". ")
                         if (calendarAware) append(note.ifBlank { "Auto-picked from calendar availability. " })
-                        append("Lumi will notify + announce it then; it's on the chat timeline now.")
+                        append("Mythara will notify + announce it then; it's on the chat timeline now.")
                     }
                 },
             )

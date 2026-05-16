@@ -58,7 +58,7 @@ class TapTool @Inject constructor() : Tool {
         return ConfirmationGate.ConfirmRequest(
             id = "", toolName = name,
             title = "Tap screen at ($x, $y)?",
-            body = "Lumi wants to dispatch a tap gesture at this point on whatever's currently on screen.",
+            body = "Mythara wants to dispatch a tap gesture at this point on whatever's currently on screen.",
         )
     }
 
@@ -114,7 +114,7 @@ class SwipeTool @Inject constructor() : Tool {
         return ConfirmationGate.ConfirmRequest(
             id = "", toolName = name,
             title = "Swipe from ($x1, $y1) to ($x2, $y2)?",
-            body = "Lumi wants to drag/fling across the screen on the foreground app.",
+            body = "Mythara wants to drag/fling across the screen on the foreground app.",
         )
     }
 

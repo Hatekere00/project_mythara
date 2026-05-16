@@ -1,22 +1,22 @@
 package com.mythara.secret.observe.extract
 
 /**
- * Detects explicit "talk to Lumi" prefixes in Observe transcripts and
+ * Detects explicit "talk to Mythara" prefixes in Observe transcripts and
  * extracts the tail as a deliberate user note.
  *
- *   "Lumi, remember that the new wifi password is xyz"
+ *   "Mythara, remember that the new wifi password is xyz"
  *     → note: "remember that the new wifi password is xyz"
  *
- *   "Hey Lumi note this down — meeting moved to 4pm"
+ *   "Hey Mythara note this down — meeting moved to 4pm"
  *     → note: "note this down meeting moved to 4pm"
  *
  * The match is anchored at start-of-utterance only (we don't want
- * "I told Lumi about the bug" to fire). Vosk transcripts are
+ * "I told Mythara about the bug" to fire). Vosk transcripts are
  * lowercase by default, but the regex is case-insensitive anyway.
  *
- * False-positive surface area is low: Mythara is "Lumi" specifically
+ * False-positive surface area is low: Mythara is "Mythara" specifically
  * because the syllable count + vowel pattern is rare in English
- * conversation. If the user starts a sentence with "Lumi" they almost
+ * conversation. If the user starts a sentence with "Mythara" they almost
  * certainly mean the assistant.
  *
  * Pairs with M8.3a's wake-word listener: same trigger phrase, different
@@ -27,20 +27,20 @@ package com.mythara.secret.observe.extract
 object LumiNoteDetector {
 
     /**
-     * Returns the note text (with the "Lumi" prefix stripped) if the
-     * transcript begins with a Lumi address, else null.
+     * Returns the note text (with the "Mythara" prefix stripped) if the
+     * transcript begins with a Mythara address, else null.
      *
      * Recognised prefixes:
-     *   - "Lumi[,/:] <note>"                  (bare address)
-     *   - "Hey Lumi[,/:] <note>"
-     *   - "Hi Lumi[,/:] <note>"
-     *   - "Okay Lumi[,/:] <note>"
-     *   - "Hello Lumi[,/:] <note>"
+     *   - "Mythara[,/:] <note>"                  (bare address)
+     *   - "Hey Mythara[,/:] <note>"
+     *   - "Hi Mythara[,/:] <note>"
+     *   - "Okay Mythara[,/:] <note>"
+     *   - "Hello Mythara[,/:] <note>"
      *   - Same forms with no comma/colon, just whitespace
-     *   - "Lumi please <note>" / "Lumi remember <note>" (imperatives)
+     *   - "Mythara please <note>" / "Mythara remember <note>" (imperatives)
      *
      * Also tolerates common Vosk mishears for the proper noun
-     * ("loomi", "lumy", "loomie") since "Lumi" is OOV for the en-us
+     * ("loomi", "lumy", "loomie") since "Mythara" is OOV for the en-us
      * small model and likely to get transcribed phonetically.
      */
     fun detect(transcript: String): String? {
@@ -53,21 +53,21 @@ object LumiNoteDetector {
     /**
      * Pattern, in order:
      *   - one of two alternations covering Vosk-en-us mishears of
-     *     the proper noun "Lumi" (which is out-of-vocab and gets
+     *     the proper noun "Mythara" (which is out-of-vocab and gets
      *     hallucinated as nearby phonemes):
      *
      *     a) "<opener> me" — Vosk drops the L and renders the
      *        remaining "-uh-mee" as just "me", typically with a short
      *        opener like `a`, `hey`, `hello`, `hi`, `the` from the
-     *        original "Hey Lumi". Real samples captured in field test:
-     *          "a me" (was "Hey Lumi")
-     *          "hello me what time is it" (was "Hey Lumi what time is it")
+     *        original "Hey Mythara". Real samples captured in field test:
+     *          "a me" (was "Hey Mythara")
+     *          "hello me what time is it" (was "Hey Mythara what time is it")
      *
      *     b) An L-vowel-token whose phonemes are close to "loomy":
      *        `lumi / loomi / loomy / lumey / leumi / lumy / lumie /
      *        loomie / lou me / lou mi`, with an optional standard
      *        opener. Real samples:
-     *          "leumi hello" (was "Lumi hello")
+     *          "leumi hello" (was "Mythara hello")
      *
      *   - optional connector words (please / can you / remember /
      *     note / jot down) consumed by the prefix so the returned
@@ -75,7 +75,7 @@ object LumiNoteDetector {
      *   - optional `,` `:` `-` or whitespace before the query.
      *
      * Trade-off: pattern (a) makes the regex broader and admits some
-     * legitimate "hey me ..." utterances as Lumi commands. Acceptable
+     * legitimate "hey me ..." utterances as Mythara commands. Acceptable
      * because that phrasing is unusual in natural speech, and users
      * who say "hey me" deliberately probably want to address the
      * assistant anyway.

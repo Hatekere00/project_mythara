@@ -43,7 +43,7 @@ import javax.inject.Singleton
  *   4. Returns the latest fix when one lands, or "still waiting"
  *      with the request id when the wait runs out.
  *
- * The user can re-poll for the response later by asking Lumi
+ * The user can re-poll for the response later by asking Mythara
  * again — the same requestId is found and the latest matching
  * response is returned.
  *

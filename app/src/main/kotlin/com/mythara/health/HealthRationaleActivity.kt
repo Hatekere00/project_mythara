@@ -80,7 +80,7 @@ private fun RationaleContent(onClose: () -> Unit) {
 
         Spacer(Modifier.height(20.dp))
         Para(
-            "Mythara (Lumi) reads your Health Connect data — steps, sleep, " +
+            "Mythara reads your Health Connect data — steps, sleep, " +
                 "heart rate, activity, weight — to build the health history " +
                 "on your About Me screen and to ground its personality " +
                 "insights in how you're actually doing.",

@@ -100,7 +100,7 @@ fun AutoTriagePanel(vm: AutoTriageViewModel = hiltViewModel()) {
 
         Spacer(Modifier.height(6.dp))
         Text(
-            text = "${Glyph.AccentBar} when ON, Lumi also analyses messages from people NOT in your favorites. She decides if a reply is needed (skips marketing, OTPs, shipping updates, group chats, anything ambiguous) and when she does reply, she mirrors the sender's tone. URLs from unknown senders are NEVER opened — strict security. Same isolation rules as favorite auto-replies: never leaks info from one conversation into another. Requires master autopilot to be ON.",
+            text = "${Glyph.AccentBar} when ON, Mythara also analyses messages from people NOT in your favorites. She decides if a reply is needed (skips marketing, OTPs, shipping updates, group chats, anything ambiguous) and when she does reply, she mirrors the sender's tone. URLs from unknown senders are NEVER opened — strict security. Same isolation rules as favorite auto-replies: never leaks info from one conversation into another. Requires master autopilot to be ON.",
             style = MaterialTheme.typography.bodySmall.copy(color = MytharaColors.FgDim),
         )
     }

@@ -106,7 +106,7 @@ fun EnterpriseAutopilotPanel(vm: EnterpriseAutopilotViewModel = hiltViewModel())
 
         Spacer(Modifier.height(6.dp))
         Text(
-            text = "${Glyph.AccentBar} controls auto-actions on Teams, Outlook, Slack, Webex, Zoom, Google Chat. When ON, Lumi can auto-reply on these apps for the favorites you've configured + creates calendar events on your work calendar. When OFF, these apps are strictly read — meeting invites still surface, calendar reads still work, but nothing gets sent back without an explicit tap. Reading from enterprise apps (Outlook calendar events, Teams meeting times) is always allowed regardless of this toggle.",
+            text = "${Glyph.AccentBar} controls auto-actions on Teams, Outlook, Slack, Webex, Zoom, Google Chat. When ON, Mythara can auto-reply on these apps for the favorites you've configured + creates calendar events on your work calendar. When OFF, these apps are strictly read — meeting invites still surface, calendar reads still work, but nothing gets sent back without an explicit tap. Reading from enterprise apps (Outlook calendar events, Teams meeting times) is always allowed regardless of this toggle.",
             style = MaterialTheme.typography.bodySmall.copy(color = MytharaColors.FgDim),
         )
     }

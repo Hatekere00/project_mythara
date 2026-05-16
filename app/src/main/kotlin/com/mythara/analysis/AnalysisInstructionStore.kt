@@ -15,7 +15,7 @@ import javax.inject.Singleton
  * [com.mythara.persona.PersonaBuilder],
  * [com.mythara.analytics.ContactAnalyticsBuilder]) pull the applicable
  * instructions in via [promptBlock] and prepend them to their Gemma
- * prompts — so the analysis genuinely evolves as Lumi learns.
+ * prompts — so the analysis genuinely evolves as Mythara learns.
  *
  * `appliesTo` scopes an instruction:
  *  - "persona"  → the user's usage/behaviour persona pass

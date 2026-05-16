@@ -35,7 +35,7 @@ import kotlinx.coroutines.isActive
  *     sound but no words; or no speech at all in the window) we
  *     restart silently — these are normal idle states.
  *   - On `ERROR_RECOGNIZER_BUSY` we back off 1s then restart — usually
- *     means another mic client (Observe, Lumi-listen) momentarily
+ *     means another mic client (Observe, Mythara-listen) momentarily
  *     held the device.
  *   - All other errors propagate to the caller; the loop continues
  *     after a brief settle delay.

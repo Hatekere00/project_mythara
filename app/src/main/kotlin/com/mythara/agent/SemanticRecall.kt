@@ -241,7 +241,7 @@ class SemanticRecall @Inject constructor(
      * This is the signal that should dominate the CURRENT turn's
      * response prosody / system framing. The 6-hour trend is what
      * shapes longer-arc relational tone; the current mood is what
-     * shapes "right now Lumi should sound calmer".
+     * shapes "right now Mythara should sound calmer".
      */
     suspend fun currentMood(maxAgeMs: Long = CURRENT_MOOD_WINDOW_MS): String? {
         if (!isEnabled()) return null
@@ -281,7 +281,7 @@ class SemanticRecall @Inject constructor(
         currentMood: String?,
         moodTrend: String?,
     ): String? {
-        // Render even when both are null — we want Lumi to know the
+        // Render even when both are null — we want Mythara to know the
         // emotional channel is observed every turn, so she stays
         // realistic rather than defaulting to over-cheerful assistant
         // mode. The "neutral" default still ships personality
@@ -317,7 +317,7 @@ class SemanticRecall @Inject constructor(
         renderMoodSystemMessage(currentMood = null, moodTrend = moodTrend)
 
     /**
-     * Per-mood directive. Tilted toward REALISTIC over warm — Lumi
+     * Per-mood directive. Tilted toward REALISTIC over warm — Mythara
      * is a friend, not a therapist or a sycophantic assistant. Each
      * directive includes both DO and DON'T so the model has a sharp
      * edge to push against rather than a fuzzy "be supportive".

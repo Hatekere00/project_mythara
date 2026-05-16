@@ -184,7 +184,7 @@ fun NotificationAccessPanel(
             )
         }
         Text(
-            text = "${Glyph.AccentBar} when on, every new notification (skipping ongoing pings and Mythara's own) is funnelled through the agent — Lumi summarises in ≤15 words and speaks it out. Reply 'NOSURFACE' from the model silently drops noise. Burns MiniMax tokens on every push, so it's off by default.",
+            text = "${Glyph.AccentBar} when on, every new notification (skipping ongoing pings and Mythara's own) is funnelled through the agent — Mythara summarises in ≤15 words and speaks it out. Reply 'NOSURFACE' from the model silently drops noise. Burns MiniMax tokens on every push, so it's off by default.",
             color = MytharaColors.FgDim,
             style = MaterialTheme.typography.bodySmall,
         )
@@ -215,7 +215,7 @@ fun NotificationAccessPanel(
             )
         }
         Text(
-            text = "${Glyph.AccentBar} Mythara watches which apps' notifications you usually swipe away. After 3+ dismisses with a 70%+ dismissal rate per app, it auto-dismisses new ones from that app before they distract you. Ask Lumi 'what did you dismiss?' to see the log. Doesn't auto-reply to messages yet — that's coming.",
+            text = "${Glyph.AccentBar} Mythara watches which apps' notifications you usually swipe away. After 3+ dismisses with a 70%+ dismissal rate per app, it auto-dismisses new ones from that app before they distract you. Ask Mythara 'what did you dismiss?' to see the log. Doesn't auto-reply to messages yet — that's coming.",
             color = MytharaColors.FgDim,
             style = MaterialTheme.typography.bodySmall,
         )

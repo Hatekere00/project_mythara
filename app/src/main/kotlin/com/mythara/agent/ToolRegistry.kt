@@ -88,6 +88,23 @@ class ToolRegistry @Inject constructor(
     teamCallTool: com.mythara.agent.tools.TeamCallTool,
     readSensorsTool: com.mythara.agent.tools.ReadSensorsTool,
     requestRemoteSensorsTool: com.mythara.agent.tools.RequestRemoteSensorsTool,
+    // ── Capability Expansion v2 ──
+    // Canvas (agent's visual channel):
+    renderCanvasTool: com.mythara.agent.tools.RenderCanvasTool,
+    updateCanvasTool: com.mythara.agent.tools.UpdateCanvasTool,
+    readCanvasInputTool: com.mythara.agent.tools.ReadCanvasInputTool,
+    openUrlTool: com.mythara.agent.tools.OpenUrlTool,
+    generateImageTool: com.mythara.agent.tools.GenerateImageTool,
+    // Shell + filesystem (sandbox-restricted):
+    runShellTool: com.mythara.agent.tools.RunShellTool,
+    readFileTool: com.mythara.agent.tools.ReadFileTool,
+    writeFileTool: com.mythara.agent.tools.WriteFileTool,
+    listDirTool: com.mythara.agent.tools.ListDirTool,
+    // Android 15 Linux Terminal SSH bridge:
+    linuxVmBridgeTool: com.mythara.agent.tools.LinuxVmBridgeTool,
+    // Shizuku-backed cosmetic system tweaks:
+    cosmeticTool: com.mythara.agent.tools.CosmeticTool,
+    listCosmeticTool: com.mythara.agent.tools.ListCosmeticTool,
     private val mcpRegistry: com.mythara.mcp.McpRegistry,
     private val gate: ConfirmationGate,
     private val allowlist: com.mythara.data.AllowlistStore,
@@ -140,6 +157,19 @@ class ToolRegistry @Inject constructor(
         teamCallTool,
         readSensorsTool,
         requestRemoteSensorsTool,
+        // ── Capability Expansion v2 ──
+        renderCanvasTool,
+        updateCanvasTool,
+        readCanvasInputTool,
+        openUrlTool,
+        generateImageTool,
+        runShellTool,
+        readFileTool,
+        writeFileTool,
+        listDirTool,
+        linuxVmBridgeTool,
+        cosmeticTool,
+        listCosmeticTool,
     )
 
     /** Native + currently-known MCP tools, merged. Recomputed on every
@@ -297,7 +327,7 @@ class ToolRegistry @Inject constructor(
         //   (c) the user has configured a non-blank prefix.
         // Done mechanically here rather than via the LLM prompt because
         // LLMs frequently strip or reflow leading parentheticals — the
-        // only guarantee that "LUMI (autopilot):" actually reaches the
+        // only guarantee that "MYTHARA (autopilot):" actually reaches the
         // wire is to splice it in deterministically.
         val effectiveArgs: JsonObject = run {
             val isAutoReplyTurn = currentCoroutineContext()[AutoReplyMarker.Key] != null

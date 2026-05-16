@@ -13,7 +13,7 @@ import javax.inject.Inject
 
 /**
  * Thin HiltViewModel that exposes app-wide event streams to MytharaRoot.
- * Today only the Lumi wake-query flow lives here; future bus-style
+ * Today only the Mythara wake-query flow lives here; future bus-style
  * signals (push notification taps, intent-extra hooks) can ride along
  * without bloating AuthViewModel.
  *

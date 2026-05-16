@@ -16,13 +16,13 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Process-wide "tap to talk to Lumi" persistent notification.
+ * Process-wide "tap to talk to Mythara" persistent notification.
  *
  * Unlike the FGS keepalive notification posted by
  * [com.mythara.services.AgentForegroundService] (which only shows
  * while there's active agent work), this one is meant to live
  * indefinitely — the user's always-one-tap entry point to a voice
- * conversation with Lumi, regardless of what app they're in or
+ * conversation with Mythara, regardless of what app they're in or
  * whether they have Pixel Buds connected.
  *
  * Implementation is a plain NotificationCompat ongoing notification,
@@ -69,10 +69,10 @@ class QuickTalkNotification @Inject constructor(
 
         // Reply action — inline RemoteInput. From the lockscreen,
         // shade, or a Wear OS watch you can type (or speak via
-        // watch dictation) a quick prompt to Lumi without
+        // watch dictation) a quick prompt to Mythara without
         // unlocking + opening the app.
         val replyRemoteInput = RemoteInput.Builder(NotificationReplyReceiver.KEY_REPLY_TEXT)
-            .setLabel("Ask Lumi")
+            .setLabel("Ask Mythara")
             .setAllowFreeFormInput(true)
             .setChoices(arrayOf(
                 "What's on today?",
@@ -116,7 +116,7 @@ class QuickTalkNotification @Inject constructor(
             .addAction(voiceAction)
 
         val notification = NotificationCompat.Builder(ctx, CHANNEL_ID)
-            .setContentTitle("Talk to Lumi")
+            .setContentTitle("Talk to Mythara")
             .setContentText("Tap to speak, or pull down for quick reply.")
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(tapPi)
@@ -143,7 +143,7 @@ class QuickTalkNotification @Inject constructor(
         if (nm.getNotificationChannel(CHANNEL_ID) != null) return
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Talk to Lumi",
+            "Talk to Mythara",
             // LOW so the notification posts silently — it's a
             // persistent affordance, not an alert.
             NotificationManager.IMPORTANCE_LOW,

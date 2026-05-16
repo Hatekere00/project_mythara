@@ -21,7 +21,7 @@ import javax.inject.Singleton
  * `ACTION_CALL` direct-dial, which lands with M6's ConfirmationGate).
  *
  * Same safety stance as `send_sms`: in v1 the user is always the one
- * who hits the trigger. Lumi just opens the right surface with the
+ * who hits the trigger. Mythara just opens the right surface with the
  * right context.
  */
 @Singleton
@@ -32,7 +32,7 @@ class PlaceCallTool @Inject constructor(
     override val name: String = "place_call"
     override val description: String =
         "Open the phone dialer pre-filled with a number. " +
-            "The user taps the call button themselves — Lumi never dials silently in v1. " +
+            "The user taps the call button themselves — Mythara never dials silently in v1. " +
             "Use when the user asks 'call John' or 'phone the office' — after resolving the name to a number via read_contact."
 
     override val parameters: JsonObject = buildJsonObject {

@@ -143,7 +143,7 @@ fun MytharaRoot(
                 is AuthState.Unlocked -> {
                     var secretUnlockOpen by remember { mutableStateOf(false) }
 
-                    // "Hey Lumi <query>" → navigate to Chat. The actual
+                    // "Hey Mythara <query>" → navigate to Chat. The actual
                     // submission to MiniMax happens inside ChatViewModel
                     // (which collects the same wake-queries flow); our
                     // job here is just routing — pop the user from
@@ -312,6 +312,14 @@ fun MytharaRoot(
                             }
                             composable(Routes.MiniMaxSignIn) {
                                 MiniMaxWebSignInScreen(onBack = { nav.popBackStack() })
+                            }
+                            composable(Routes.Canvas) {
+                                // The agent's visual channel — a
+                                // WebView the agent can write
+                                // HTML/JS/canvas content into and read
+                                // structured input back from via the
+                                // window.mythara JS bridge.
+                                com.mythara.ui.canvas.CanvasScreen(onBack = { nav.popBackStack() })
                             }
                             composable(Routes.Dashboard) {
                                 // Compact-mode Dashboard — the same
@@ -541,6 +549,11 @@ object Routes {
      *  session cookies so the Usage screen can show the same data
      *  as the platform's token-plan dashboard. */
     const val MiniMaxSignIn = "minimax-signin"
+
+    /** The agent's visual canvas — a WebView the agent can write
+     *  HTML/JS/canvas content into, with a JS bridge for receiving
+     *  user input back. See [com.mythara.ui.canvas.CanvasScreen]. */
+    const val Canvas = "canvas"
 }
 
 /** Hilt accessor for plain composables (no ViewModel) — lets the

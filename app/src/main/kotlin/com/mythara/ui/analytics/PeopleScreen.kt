@@ -603,7 +603,7 @@ private fun ProfileDetail(
         DetailCard("${Glyph.DiamondOutline} relationship summary") {
             Text(
                 text = p.relationshipSummary
-                    ?: "Not enough data yet — Lumi needs a few more conversations before she can describe this relationship.",
+                    ?: "Not enough data yet — Mythara needs a few more conversations before she can describe this relationship.",
                 color = if (p.relationshipSummary != null) MytharaColors.Fg else MytharaColors.FgDim,
                 style = MaterialTheme.typography.bodyMedium,
             )
@@ -622,7 +622,7 @@ private fun ProfileDetail(
         }
 
         Spacer(Modifier.height(12.dp))
-        DetailCard("${Glyph.DiamondOutline} big five — Lumi's read on this person") {
+        DetailCard("${Glyph.DiamondOutline} big five — Mythara's read on this person") {
             if (p.openness == null) {
                 Text(
                     text = "Big Five estimation needs at least ${ContactProfileRow.MIN_BIG_FIVE_SAMPLE} captured snippets. Currently ${p.messageCount}. Keep chatting — the read sharpens with more samples.",

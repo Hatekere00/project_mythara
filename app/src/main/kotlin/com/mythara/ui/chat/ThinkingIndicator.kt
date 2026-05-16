@@ -33,7 +33,7 @@ import com.mythara.ui.theme.MytharaColors
 import kotlinx.coroutines.delay
 
 /**
- * "Lumi is thinking…" indicator with the Charple→Bok gradient
+ * "Mythara is thinking…" indicator with the Charple→Bok gradient
  * (the same brand gradient as the MYTHARA wordmark). Cycles
  * through a small rolodex of phrases every ~1.6s so the user
  * sees life rather than a static "thinking…" string.
@@ -41,7 +41,7 @@ import kotlinx.coroutines.delay
  * The gradient itself animates — Charple → Bok sweeps left-to-right
  * across the text via a translate offset on a linearGradient brush
  * applied through SpanStyle. Combined with the rolodex phrase
- * cycle, it reads as "Lumi is alive and working", not "your phone
+ * cycle, it reads as "Mythara is alive and working", not "your phone
  * froze".
  *
  * Rendered in the chat surface between submit() and the first
@@ -117,11 +117,11 @@ private const val PHRASE_INTERVAL_MS = 1_600L
 private const val GRADIENT_PERIOD_MS = 2_400
 
 private val PHRASES = listOf(
-    "Lumi is thinking…",
+    "Mythara is thinking…",
     "Reading the room…",
     "Composing a reply…",
     "Looking it up…",
     "Pulling things together…",
     "Just a sec…",
-    "Lumi is working…",
+    "Mythara is working…",
 )

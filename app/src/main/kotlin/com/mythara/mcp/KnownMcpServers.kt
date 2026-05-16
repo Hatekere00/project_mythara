@@ -99,7 +99,7 @@ object KnownMcpServers {
         ),
 
         // ----- Mobile-relevant additions -----
-        // These are the MCPs most useful from a phone where Lumi
+        // These are the MCPs most useful from a phone where Mythara
         // already has the device-side tools (camera, location, SMS,
         // contacts) but lacks a web-shaped escape hatch for "what's
         // the weather", "translate this", "look up this fact". All

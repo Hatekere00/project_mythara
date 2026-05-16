@@ -14,15 +14,15 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * `list_dismissed_notifications` — what did Lumi quietly dismiss?
+ * `list_dismissed_notifications` — what did Mythara quietly dismiss?
  *
  * Companion to the smart-auto-action notification mode. When the
  * user asks "did I miss anything earlier today?" or "what
  * notifications did you dismiss?", this tool surfaces the recent
- * auto-dismissal log so Lumi can summarise them.
+ * auto-dismissal log so Mythara can summarise them.
  *
  * Stored in [NotificationActionStore]'s rolling log, capped at 100
- * entries. The user can ask after the fact and Lumi can either
+ * entries. The user can ask after the fact and Mythara can either
  * read them out or filter ("anything from Mom?").
  */
 @Singleton

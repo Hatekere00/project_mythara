@@ -56,7 +56,7 @@ class AutoReplyPrefixViewModel @Inject constructor(
  *
  * Common use case: marking agent-sent messages so recipients can
  * distinguish them from messages the user typed manually — e.g.
- * "LUMI (autopilot): I'll be there at 5".
+ * "MYTHARA (autopilot): I'll be there at 5".
  *
  * Saves on each keystroke (DataStore preferences write is cheap)
  * so the user doesn't have to remember to tap a save button.
@@ -95,7 +95,7 @@ fun AutoReplyPrefixPanel(vm: AutoReplyPrefixViewModel = hiltViewModel()) {
                 vm.set(it)
             },
             singleLine = true,
-            placeholder = { Text("LUMI (autopilot): ", color = MytharaColors.FgDim) },
+            placeholder = { Text("MYTHARA (autopilot): ", color = MytharaColors.FgDim) },
             colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = MytharaColors.Fg,
                 unfocusedTextColor = MytharaColors.Fg,

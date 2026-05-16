@@ -25,7 +25,7 @@ import javax.inject.Singleton
  * the message goes out instantly — no system UI in between.
  *
  * Why both this AND the composer-based tool: voice flows are way
- * smoother with direct-send ("hey lumi, tell mom I'm running late"
+ * smoother with direct-send ("hey mythara, tell mom I'm running late"
  * → confirm → done). But many cases want the user to review/edit
  * (long messages, sensitive recipients), so the composer path stays
  * for the model to pick when appropriate.

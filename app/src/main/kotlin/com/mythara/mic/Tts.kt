@@ -46,7 +46,7 @@ class Tts @Inject constructor(
     /**
      * Live "TTS is producing audio right now" flag. The chat surface
      * consumes this to pause its continuous SpeechRecognizer loop —
-     * without that pause, the mic would pick up Lumi's own voice
+     * without that pause, the mic would pick up Mythara's own voice
      * playing through the speaker and try to transcribe it, looping
      * the assistant back on itself.
      */
@@ -113,7 +113,7 @@ class Tts @Inject constructor(
      * [userMoodTrend] is a hint from M8.5 phase 3: when the user's
      * recent emotional state is known (e.g. "anxious", "excited",
      * "sad", "frustrated"), the speech rate + pitch are tweaked
-     * subtly to make Lumi's voice feel appropriate — softer and
+     * subtly to make Mythara's voice feel appropriate — softer and
      * slower when the user is stressed; slightly more upbeat when
      * the user is excited. Defaults to the engine's normal rate/pitch
      * when no trend is detected. Settings are restored to defaults
@@ -183,7 +183,7 @@ class Tts @Inject constructor(
         )
         if (!outcome.ok) {
             // Fallback: synthesize via Android TTS so the user still
-            // hears Lumi even when ElevenLabs is down / over quota.
+            // hears Mythara even when ElevenLabs is down / over quota.
             android.util.Log.w("Mythara/Tts", "ElevenLabs failed (${outcome.code}: ${outcome.detail}); falling back to Android TTS")
             speakViaAndroid(text, locale = null, userMoodTrend = userMoodTrend)
         }

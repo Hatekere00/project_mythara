@@ -103,7 +103,7 @@ fun ProcessCallNotificationsPanel(vm: ProcessCallNotificationsViewModel = hiltVi
 
         Spacer(Modifier.height(6.dp))
         Text(
-            text = "${Glyph.AccentBar} when OFF (the default), Mythara IGNORES every phone / VoIP call notification — incoming, missed, ongoing — across the dialer app, WhatsApp / Signal / Telegram voice + video calls, etc. No agent triage, no auto-reply, no narration. When ON, call notifications flow into the same auto-process pipeline as messages — useful if you want Lumi to announce 'X is calling' over TTS. Calls are a different interaction mode; most users want this off.",
+            text = "${Glyph.AccentBar} when OFF (the default), Mythara IGNORES every phone / VoIP call notification — incoming, missed, ongoing — across the dialer app, WhatsApp / Signal / Telegram voice + video calls, etc. No agent triage, no auto-reply, no narration. When ON, call notifications flow into the same auto-process pipeline as messages — useful if you want Mythara to announce 'X is calling' over TTS. Calls are a different interaction mode; most users want this off.",
             style = MaterialTheme.typography.bodySmall.copy(color = MytharaColors.FgDim),
         )
     }

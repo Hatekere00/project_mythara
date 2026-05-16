@@ -31,7 +31,7 @@ import javax.inject.Inject
  * vectors and persists an [EnrolledSpeaker] via [SpeakerVault.enroll].
  *
  * Mic conflict: this owns its own AudioRecorder during enrollment,
- * which means Observe + Lumi-listen + Continuous-chat must all be
+ * which means Observe + Mythara-listen + Continuous-chat must all be
  * off. Caller (the dialog) checks before opening; runtime conflict
  * shows up as an `AudioRecord init failed` error in [state.error].
  */
@@ -153,7 +153,7 @@ class SpeakerEnrollmentViewModel @Inject constructor(
             _state.update {
                 it.copy(
                     recording = false,
-                    error = "Microphone busy — close Observe / Lumi-listen / voice mode and try again",
+                    error = "Microphone busy — close Observe / Mythara-listen / voice mode and try again",
                 )
             }
             return

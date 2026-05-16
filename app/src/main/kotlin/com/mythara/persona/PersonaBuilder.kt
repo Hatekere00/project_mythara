@@ -14,7 +14,7 @@ import java.util.Locale
  * Reads aggregated [UsageStatsCollector] output and writes
  * persona-trait records into the [LearningVault] so the agent's
  * recall pulls them on every chat turn — the user's behaviour
- * becomes part of Lumi's context.
+ * becomes part of Mythara's context.
  *
  * What we extract per daily run:
  *  - **top apps** — natural-language sentence listing the

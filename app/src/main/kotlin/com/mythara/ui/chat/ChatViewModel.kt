@@ -85,7 +85,7 @@ class ChatViewModel @Inject constructor(
                 tasks = runCatching { taskRepo.dao.listRecent(limit = 200) }.getOrDefault(emptyList()),
             )
         }
-        // "Hey Lumi <query>" → submit the query just like a typed
+        // "Hey Mythara <query>" → submit the query just like a typed
         // message, but flag it as voice-originated so the agent loop
         // injects the "be brief, no markdown" system prompt.
         viewModelScope.launch {
@@ -99,7 +99,7 @@ class ChatViewModel @Inject constructor(
             }
         }
         // Plumb TTS "is speaking right now" up to the UI so the
-        // continuous-voice loop can pause while Lumi is replying out
+        // continuous-voice loop can pause while Mythara is replying out
         // loud — otherwise the mic picks up the assistant's own voice
         // and starts transcribing it.
         viewModelScope.launch {
@@ -123,7 +123,7 @@ class ChatViewModel @Inject constructor(
         //    the user-actionable kind
         //  - skip our own package — Mythara's own FGS notif would
         //    otherwise loop the agent on itself
-        //  - skip while Lumi is already mid-reply (speaking/thinking)
+        //  - skip while Mythara is already mid-reply (speaking/thinking)
         //    to avoid stacking spoken summaries on top of an answer
         //    the user is already hearing
         viewModelScope.launch {
@@ -382,7 +382,7 @@ class ChatViewModel @Inject constructor(
 
         /**
          * A logged interaction with a contact — a call, message, or
-         * WhatsApp Lumi sent, or a contact lookup. Interleaved into the
+         * WhatsApp Mythara sent, or a contact lookup. Interleaved into the
          * timeline by the interaction's timestamp, like photos and
          * reminders, so the scrollback shows who was contacted when.
          */
@@ -419,7 +419,7 @@ class ChatViewModel @Inject constructor(
          * in via the chat-header pill.
          */
         val continuousMode: Boolean = false,
-        /** True between the user's wake utterance and Lumi's TTS reply finishing. */
+        /** True between the user's wake utterance and Mythara's TTS reply finishing. */
         val speaking: Boolean = false,
         /** Current per-device filter for lifeline photos. */
         val lifelineFilter: LifelineFilter = LifelineFilter.ALL,
@@ -793,7 +793,7 @@ class ChatViewModel @Inject constructor(
                                         // tags so [laugh]/[sigh] remain
                                         // visible — that's intentional
                                         // emotion context the user can read
-                                        // as "Lumi laughed".
+                                        // as "Mythara laughed".
                                         val display = SpokenText.forSpeech(
                                             input = seg.content,
                                             keepAudioTags = true,

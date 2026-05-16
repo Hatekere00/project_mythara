@@ -28,7 +28,7 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
- * Always-on Vosk listener that watches for "Hey Lumi <query>" utterances
+ * Always-on Vosk listener that watches for "Hey Mythara <query>" utterances
  * and pushes the query directly into the chat agent. Replaces the
  * earlier openWakeWord + SpeechRecognizer two-stage design — the
  * hardware layer can't multiplex AudioRecord clients, so we collapse
@@ -41,8 +41,8 @@ import javax.inject.Inject
  *    utterances are dropped on the floor; matched queries leave the
  *    device only via the normal MiniMax round-trip in ChatViewModel,
  *    same as a typed message.
- *  - The persistent foreground notification ("Lumi · Listening for
- *    'Hey Lumi'") is mandatory under Android's FGS rules; we keep it
+ *  - The persistent foreground notification ("Mythara · Listening for
+ *    'Hey Mythara'") is mandatory under Android's FGS rules; we keep it
  *    minimal.
  *
  * Mutually exclusive with ObserveForegroundService — Android's
@@ -120,7 +120,7 @@ class LumiListenerService : Service() {
         val buf = ShortArray(recorder.readFrameSamples)
         loopJob = scope.launch {
             store.setState(LumiListenerStore.State.Listening)
-            Log.d(TAG, "Lumi always-listen up — Vosk loop running")
+            Log.d(TAG, "Mythara always-listen up — Vosk loop running")
             try {
                 while (isActive) {
                     val n = recorder.read(buf)
@@ -145,7 +145,7 @@ class LumiListenerService : Service() {
                 recorder.stop()
                 recorder.release()
                 micBroker.release(MicBroker.Client.LUMI_LISTEN)
-                Log.d(TAG, "Lumi always-listen stopped")
+                Log.d(TAG, "Mythara always-listen stopped")
             }
         }
     }
@@ -153,7 +153,7 @@ class LumiListenerService : Service() {
     private fun handleTranscript(text: String) {
         // Privacy: non-matching transcripts must never escape volatile
         // memory — the panel's contract is "Vosk runs locally, nothing
-        // is persisted unless it's a 'Hey Lumi <query>' that the user
+        // is persisted unless it's a 'Hey Mythara <query>' that the user
         // explicitly addressed to the assistant". logcat is a circular
         // buffer that *does* persist long enough for screen-recording
         // / bug-report grabs to capture it, so don't log raw text.
@@ -178,10 +178,10 @@ class LumiListenerService : Service() {
         if (nm.getNotificationChannel(CHANNEL_ID) != null) return
         val ch = NotificationChannel(
             CHANNEL_ID,
-            "Lumi always-listen",
+            "Mythara always-listen",
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "Mythara is listening for 'Hey Lumi'."
+            description = "Mythara is listening for 'Hey Mythara'."
             setShowBadge(false)
         }
         nm.createNotificationChannel(ch)
@@ -202,8 +202,8 @@ class LumiListenerService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentTitle("Lumi (Mythara)")
-            .setContentText("Listening for 'Hey Lumi …'")
+            .setContentTitle("Mythara")
+            .setContentText("Listening for 'Hey Mythara …'")
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setContentIntent(tap)
@@ -212,7 +212,7 @@ class LumiListenerService : Service() {
     }
 
     companion object {
-        private const val TAG = "Mythara/Lumi"
+        private const val TAG = "Mythara/Wake"
         private const val CHANNEL_ID = "mythara.wake.lumi.listen"
         private const val NOTIF_ID = 0x77ABBB
         const val ACTION_STOP = "com.mythara.wake.STOP_LISTEN"

@@ -133,7 +133,7 @@ fun McpServersPanel(vm: McpServersPanelViewModel = hiltViewModel()) {
         }
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "${Glyph.AccentBar} Connect external Model Context Protocol servers (HTTP-streamable). Their tools appear to Lumi alongside Mythara's native tools and can be called by name.",
+            text = "${Glyph.AccentBar} Connect external Model Context Protocol servers (HTTP-streamable). Their tools appear to Mythara alongside Mythara's native tools and can be called by name.",
             color = MytharaColors.FgDim,
             style = MaterialTheme.typography.bodySmall,
         )

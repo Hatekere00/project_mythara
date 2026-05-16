@@ -76,7 +76,7 @@ class ObserveSession @Inject constructor(
         if (isRunning) return Result.success(Unit)
         if (!asr.isReady()) return Result.failure(IllegalStateException("Vosk model not ready"))
 
-        // Acquire the mic via the broker FIRST. If another mode (Lumi
+        // Acquire the mic via the broker FIRST. If another mode (Mythara
         // wake-word listener / continuous voice chat) is currently
         // holding it, refuse cleanly with a clear error — UI surfaces
         // this so the user can toggle the other mode off.
@@ -315,11 +315,11 @@ class ObserveSession @Inject constructor(
             now = now,
         )
 
-        // 2a. Explicit "Hey Lumi, ..." notes. Always conf=1.0 because the
+        // 2a. Explicit "Hey Mythara, ..." notes. Always conf=1.0 because the
         //     user literally addressed the assistant; no probabilistic
         //     extraction needed. We still let the Gemma/heuristic
         //     extractor run below in case the same utterance carries
-        //     implicit facts as well — e.g. "Lumi, note that I prefer
+        //     implicit facts as well — e.g. "Mythara, note that I prefer
         //     dark roast" both records the deliberate note AND
         //     reinforces the preference.
         var explicitNoteCount = 0

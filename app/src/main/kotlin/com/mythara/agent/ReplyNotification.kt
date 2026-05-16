@@ -18,7 +18,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Posts a notification with Lumi's reply text when she finishes a
+ * Posts a notification with Mythara's reply text when she finishes a
  * turn while Mythara isn't visible to the user.
  *
  * Solves a real failure mode: when the agent calls open_app (or any
@@ -28,7 +28,7 @@ import javax.inject.Singleton
  * see the text answer and may not register the spoken one. They
  * have to manually navigate back to find the answer they asked for.
  *
- * This notification fixes that: the user sees "Lumi: here are your
+ * This notification fixes that: the user sees "Mythara: here are your
  * events for today …" in their status bar within a second of the
  * turn finishing. Tap → opens Mythara chat with that turn focused.
  *
@@ -81,7 +81,7 @@ class ReplyNotification @Inject constructor(
         // through NotificationReplyReceiver → AgentRunner.submit
         // without ever opening the app.
         val replyRemoteInput = RemoteInput.Builder(NotificationReplyReceiver.KEY_REPLY_TEXT)
-            .setLabel("Reply to Lumi")
+            .setLabel("Reply to Mythara")
             .setAllowFreeFormInput(true)
             // Quick chips generated on-device by Gemma, contextual to
             // *this* reply — not generic canned text. Wear OS surfaces
@@ -140,7 +140,7 @@ class ReplyNotification @Inject constructor(
             // Big icon could go here later; default is fine.
 
         val notification = NotificationCompat.Builder(ctx, CHANNEL_ID)
-            .setContentTitle("Lumi answered")
+            .setContentTitle("Mythara answered")
             .setContentText(preview)
             .setStyle(NotificationCompat.BigTextStyle().bigText(replyText))
             .setSmallIcon(R.mipmap.ic_launcher)
@@ -210,12 +210,12 @@ Example: ["Sounds good","Tell me more","Not now","Cancel it"]"""
         if (nm.getNotificationChannel(CHANNEL_ID) != null) return
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Lumi replies",
+            "Mythara replies",
             // DEFAULT (heads-up + sound) so backgrounded answers
             // actually catch the user's attention.
             NotificationManager.IMPORTANCE_DEFAULT,
         ).apply {
-            description = "Shows Lumi's reply when she finishes a turn while Mythara is in background."
+            description = "Shows Mythara's reply when she finishes a turn while Mythara is in background."
             setShowBadge(true)
         }
         nm.createNotificationChannel(channel)

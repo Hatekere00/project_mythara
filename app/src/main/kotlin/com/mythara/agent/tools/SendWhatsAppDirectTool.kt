@@ -28,7 +28,7 @@ import javax.inject.Singleton
  * brings Mythara back to the foreground.
  *
  * The user sees a brief WhatsApp flash (~2s) then is back in
- * Mythara with Lumi confirming. Compare to `send_whatsapp` (the
+ * Mythara with Mythara confirming. Compare to `send_whatsapp` (the
  * composer variant) which dumps the user inside WhatsApp with a
  * pre-filled draft and they have to tap Send + navigate back
  * themselves.

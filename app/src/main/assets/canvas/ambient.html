@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Mythara Canvas — Ambient</title>
+<style>
+  /* Palette + breath-period are set by the host (CanvasScreen) via
+     evaluateJavascript("document.documentElement.style.setProperty(
+     '--palette-top','#…')") so the same ambient page renders to any
+     of the moods enumerated in MoodVisualMapping. Defaults are the
+     neutral Mythara palette so file:// loads without host JS still
+     look right.
+
+     The breath circle scales between 0.7 and 1.0 over one full
+     --breath-period. Period 12 s = a calm baseline; CalmDown drops
+     to 19 s, GroundingForest to 14 s, etc.
+
+     Particles drift slowly. The whole page is GPU-composited so it
+     stays buttery on Android WebView even when minimised behind
+     other windows. */
+  :root {
+    --palette-top:    #06040c;
+    --palette-bottom: #2a1740;
+    --accent:         #b187ff;   /* Charple */
+    --breath-period:  12s;
+    --breath-min:     0.70;
+    --breath-max:     1.00;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0; padding: 0;
+    width: 100vw; height: 100vh;
+    overflow: hidden;
+    background: linear-gradient(180deg, var(--palette-top) 0%, var(--palette-bottom) 100%);
+    color: var(--accent);
+    font-family: -apple-system, system-ui, sans-serif;
+    -webkit-user-select: none; user-select: none;
+  }
+
+  /* The breath circle — the rose nucleus from MytharaLiveWallpaper,
+     reduced to a single hex breath since this is the ambient render
+     and the real rose lives on the wallpaper underneath. */
+  .breath {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) scale(var(--breath-min));
+    width: 38vmin; height: 38vmin;
+    border-radius: 50%;
+    background: radial-gradient(circle at center,
+                  rgba(177, 135, 255, 0.55) 0%,
+                  rgba(177, 135, 255, 0.18) 45%,
+                  rgba(177, 135, 255, 0.00) 70%);
+    animation: breath var(--breath-period) ease-in-out infinite;
+  }
+
+  @keyframes breath {
+    0%, 100% { transform: translate(-50%, -50%) scale(var(--breath-min)); }
+    50%      { transform: translate(-50%, -50%) scale(var(--breath-max)); }
+  }
+
+  /* Soft particle field — same role as the wallpaper's twinkles.
+     Pure CSS, no JS animation loop, no battery drain. */
+  .field { position: absolute; inset: 0; pointer-events: none; }
+  .star {
+    position: absolute;
+    width: 2px; height: 2px;
+    background: var(--accent);
+    border-radius: 50%;
+    opacity: 0.45;
+    animation: drift var(--breath-period) linear infinite;
+  }
+  @keyframes drift {
+    0%   { transform: translateY(0)     scale(0.8); opacity: 0.30; }
+    50%  { transform: translateY(-12px) scale(1.0); opacity: 0.60; }
+    100% { transform: translateY(0)     scale(0.8); opacity: 0.30; }
+  }
+
+  /* Intervention label — bottom-centre, faint. Tells the user WHAT
+     ambient is being rendered for transparency. */
+  .label {
+    position: absolute;
+    bottom: 18px; left: 0; right: 0;
+    text-align: center;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(177, 135, 255, 0.55);
+  }
+</style>
+</head>
+<body>
+  <div class="field" id="field"></div>
+  <div class="breath"></div>
+  <div class="label" id="label">ambient</div>
+  <script>
+    // Generate the star field once on load. Twenty particles, random
+    // positions, random animation delays so they don't pulse in sync.
+    (function seedField() {
+      var field = document.getElementById('field');
+      for (var i = 0; i < 20; i++) {
+        var s = document.createElement('div');
+        s.className = 'star';
+        s.style.left = (Math.random() * 100) + 'vw';
+        s.style.top  = (Math.random() * 100) + 'vh';
+        s.style.animationDelay = (-Math.random() * 12) + 's';
+        field.appendChild(s);
+      }
+    })();
+
+    // Host (CanvasScreen) calls this to push the current intervention
+    // label into the UI for transparency.
+    window.setInterventionLabel = function (label) {
+      var el = document.getElementById('label');
+      if (el && label) el.textContent = String(label);
+    };
+
+    // Optional: if the bridge exists (i.e. we're loaded via inline /
+    // file path, NOT external), log a beacon so we know JS bridge
+    // is alive.
+    if (window.mythara && typeof window.mythara.log === 'function') {
+      window.mythara.log('info', 'ambient.html loaded');
+    }
+  </script>
+</body>
+</html>

@@ -16,12 +16,12 @@ import javax.inject.Inject
  *
  * Why a BroadcastReceiver rather than launching the activity:
  * the user is INTENTIONALLY staying out of the app — they want
- * to ping Lumi without unlocking + opening chat. Receiver +
+ * to ping Mythara without unlocking + opening chat. Receiver +
  * AgentRunner.scope (process-wide, not tied to the activity)
  * is the only path that delivers that.
  *
  * The reply lands as a normal user-typed turn in chat history;
- * Lumi's response goes back via the existing ReplyNotification
+ * Mythara's response goes back via the existing ReplyNotification
  * path so the round-trip is fully off-screen if the user wants.
  */
 @AndroidEntryPoint

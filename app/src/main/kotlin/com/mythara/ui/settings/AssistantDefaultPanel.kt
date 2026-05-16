@@ -36,7 +36,7 @@ import com.mythara.ui.theme.MytharaColors
 import com.mythara.voice.MytharaVoiceInteractionService
 
 /**
- * Settings panel that explains the "Pixel Buds tap → Lumi" path and
+ * Settings panel that explains the "Pixel Buds tap → Mythara" path and
  * deep-links to the system surface where the user makes Mythara the
  * default Digital Assistant app.
  *
@@ -109,7 +109,7 @@ fun AssistantDefaultPanel() {
         }
         Spacer(Modifier.height(6.dp))
         Text(
-            text = "${Glyph.AccentBar} on Android 12+, picking Mythara in 'Digital assistant app' is what routes the long-press home / corner-swipe / Pixel Buds touch-and-hold to Lumi. If the gesture still opens Google after picking Mythara, scroll for 'Use default assistant' inside Pixel Buds → Touch controls → Touch & hold → Assistant. As a fallback, the chat surface mic button always works.",
+            text = "${Glyph.AccentBar} on Android 12+, picking Mythara in 'Digital assistant app' is what routes the long-press home / corner-swipe / Pixel Buds touch-and-hold to Mythara. If the gesture still opens Google after picking Mythara, scroll for 'Use default assistant' inside Pixel Buds → Touch controls → Touch & hold → Assistant. As a fallback, the chat surface mic button always works.",
             color = MytharaColors.FgDim,
             style = MaterialTheme.typography.bodySmall,
         )

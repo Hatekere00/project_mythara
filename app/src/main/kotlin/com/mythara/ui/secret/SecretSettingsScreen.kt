@@ -134,7 +134,7 @@ fun SecretSettingsScreen(
             Spacer(Modifier.height(14.dp))
             Panel("notes") {
                 Text(
-                    text = "Capture any copied or typed text — file it as a general memory Lumi recalls, " +
+                    text = "Capture any copied or typed text — file it as a general memory Mythara recalls, " +
                         "a note about a specific person (feeds their relationship analysis), or a quick jotting.",
                     color = MytharaColors.FgDim,
                     style = MaterialTheme.typography.bodySmall,

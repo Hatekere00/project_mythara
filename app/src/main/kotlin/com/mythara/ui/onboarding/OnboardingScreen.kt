@@ -282,7 +282,7 @@ fun OnboardingScreen(
             Spacer(Modifier.height(10.dp))
             ModelDownloadCard(
                 title = "Vosk small English (~50 MB)",
-                rationale = "Powers 'Hey Lumi' wake-word + Observe-mode offline ASR. " +
+                rationale = "Powers 'Hey Mythara' wake-word + Observe-mode offline ASR. " +
                     "Skip if you only use push-to-talk.",
                 state = voskState,
                 onDownload = { vm.downloadVosk() },

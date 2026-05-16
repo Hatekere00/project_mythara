@@ -164,6 +164,20 @@ dependencies {
     // (:wear) speaks the same client API to send messages back.
     implementation(libs.play.services.wearable)
 
+    // Shizuku — privileged-shell shim. The user installs the Shizuku
+    // app + bootstraps it once via adb (or wireless debugging), which
+    // spawns a host process running with shell UID. Mythara can then
+    // ping that process to execute `settings put …`, `pm …`, etc. as
+    // if it had WRITE_SECURE_SETTINGS — without modifying /system,
+    // without persistent root. Used by the cosmetic tool (Phase 8)
+    // to apply non-invasive Android system tweaks like font scale,
+    // dark mode, accent color, gesture-nav mode.
+    // Degrades gracefully: when Shizuku is not installed or not
+    // running, the cosmetic tool returns a setup-card and the rest
+    // of Mythara is unaffected.
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
+
     // LiteRT-LM — on-device Gemma 4 E2B for M8.2.2 fact extraction. Replaces
     // MediaPipe Tasks-GenAI as Google's supported runtime path. Speaks the
     // `.litertlm` bundle format, auto-dispatches to GPU/NPU on supported

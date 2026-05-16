@@ -521,7 +521,7 @@ private fun TaskComposer(
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "${Glyph.AccentBar} ask Lumi 'what devices do I have' to see device ids. Leave blank to let any device pick this up.",
+                text = "${Glyph.AccentBar} ask Mythara 'what devices do I have' to see device ids. Leave blank to let any device pick this up.",
                 color = MytharaColors.FgDim,
                 style = MaterialTheme.typography.labelSmall,
             )

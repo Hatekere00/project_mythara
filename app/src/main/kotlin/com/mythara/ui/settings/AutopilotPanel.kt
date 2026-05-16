@@ -46,11 +46,11 @@ class AutopilotViewModel @Inject constructor(
 }
 
 /**
- * Master autopilot toggle. When ON, Lumi acts on her own — wake-word
+ * Master autopilot toggle. When ON, Mythara acts on her own — wake-word
  * triggers, notification auto-process, future passive cues all fire
  * the agent loop. When OFF, every "auto" path returns early at
  * dispatch; the user has to explicitly tap the mic or type to talk
- * to Lumi.
+ * to Mythara.
  *
  * Explicitly NOT a wake-word toggle and NOT a notification-listener
  * toggle — those have their own panels. Autopilot is the umbrella
@@ -116,7 +116,7 @@ fun AutopilotPanel(vm: AutopilotViewModel = hiltViewModel()) {
 
         Spacer(Modifier.height(6.dp))
         Text(
-            text = "${Glyph.AccentBar} when ON, Lumi acts on her own — wake word, auto-process notifications, proactively books calendar events when meetings are arranged, fires every other side-effect tool without asking. Keeps running in the background and on the lock screen. When OFF, only explicit taps (mic, typed message) talk to Lumi — the agent goes passive. Services stay alive either way so flipping back on is instant.",
+            text = "${Glyph.AccentBar} when ON, Mythara acts on her own — wake word, auto-process notifications, proactively books calendar events when meetings are arranged, fires every other side-effect tool without asking. Keeps running in the background and on the lock screen. When OFF, only explicit taps (mic, typed message) talk to Mythara — the agent goes passive. Services stay alive either way so flipping back on is instant.",
             style = MaterialTheme.typography.bodySmall.copy(color = MytharaColors.FgDim),
         )
     }

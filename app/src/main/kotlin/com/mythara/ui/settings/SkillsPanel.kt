@@ -105,7 +105,7 @@ fun SkillsPanel(vm: SkillsPanelViewModel = hiltViewModel()) {
         }
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "${Glyph.AccentBar} the procedures Lumi has learned to drive other apps. Saved here, " +
+            text = "${Glyph.AccentBar} the procedures Mythara has learned to drive other apps. Saved here, " +
                 "synced cross-device via the memory repo. Tap a row to see the steps.",
             color = MytharaColors.FgDim,
             style = MaterialTheme.typography.bodySmall,
@@ -114,7 +114,7 @@ fun SkillsPanel(vm: SkillsPanelViewModel = hiltViewModel()) {
 
         if (skills.isEmpty() && !loading) {
             Text(
-                text = "${Glyph.CircleOutline} no skills yet. Lumi writes new ones automatically when she completes a multi-step task — or you can ask her to remember a sequence.",
+                text = "${Glyph.CircleOutline} no skills yet. Mythara writes new ones automatically when she completes a multi-step task — or you can ask her to remember a sequence.",
                 color = MytharaColors.FgDim,
                 style = MaterialTheme.typography.bodySmall,
             )

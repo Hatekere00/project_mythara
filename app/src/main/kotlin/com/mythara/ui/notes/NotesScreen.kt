@@ -71,7 +71,7 @@ import javax.inject.Inject
  * menu (About → triple-tap the wordmark → unlock).
  *
  * Paste anything you copied, or jot a thought, and file it as one of:
- *  - **General memory** — a durable, embedded fact Lumi actively
+ *  - **General memory** — a durable, embedded fact Mythara actively
  *    recalls on future turns (same path as the agent's `remember` tool).
  *  - **About a person** — attached to a contact: it's added to that
  *    person's profile notes (which feed the Gemma relationship
@@ -192,7 +192,7 @@ class NotesViewModel @Inject constructor(
                         conf = 1.0,
                     )
                 }
-                "Saved as a general memory — Lumi will recall it, and your About Me profile is rebuilding."
+                "Saved as a general memory — Mythara will recall it, and your About Me profile is rebuilding."
             }
             NoteMode.Note -> {
                 runCatching {
@@ -347,7 +347,7 @@ fun NotesScreen(
             Text(
                 text = when (mode) {
                     NotesViewModel.NoteMode.Memory ->
-                        "A durable memory Lumi actively recalls on future turns."
+                        "A durable memory Mythara actively recalls on future turns."
                     NotesViewModel.NoteMode.Person ->
                         "Attached to a contact's profile — it feeds their relationship analysis."
                     NotesViewModel.NoteMode.Note ->

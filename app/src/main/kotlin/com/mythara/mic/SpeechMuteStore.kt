@@ -17,7 +17,7 @@ import javax.inject.Singleton
  * Global "speech-to-text muted" switch.
  *
  * When ON, every on-device speech path is silenced — the always-on
- * "Hey Lumi" wake-word listener, Observe-mode passive learning,
+ * "Hey Mythara" wake-word listener, Observe-mode passive learning,
  * continuous voice chat, and the push-to-talk mic button. It's the
  * single hard kill-switch for the microphone-driven STT surfaces.
  *

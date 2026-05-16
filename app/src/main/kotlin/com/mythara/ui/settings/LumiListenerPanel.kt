@@ -134,7 +134,7 @@ fun LumiListenerPanel(vm: LumiListenerPanelViewModel = hiltViewModel()) {
             .padding(14.dp),
     ) {
         Text(
-            text = "${Glyph.DiamondOutline} 'Hey Lumi' always-listen (experimental)",
+            text = "${Glyph.DiamondOutline} 'Hey Mythara' always-listen (experimental)",
             style = MaterialTheme.typography.labelLarge.copy(color = MytharaColors.FgMute),
         )
         Spacer(Modifier.height(8.dp))
@@ -150,7 +150,7 @@ fun LumiListenerPanel(vm: LumiListenerPanelViewModel = hiltViewModel()) {
                 "RECORD_AUDIO permission needed",
             )
             state.serviceState is LumiListenerStore.State.Listening -> Triple(
-                Glyph.Dot, MytharaColors.Julep, "listening for 'Hey Lumi …'",
+                Glyph.Dot, MytharaColors.Julep, "listening for 'Hey Mythara …'",
             )
             state.serviceState is LumiListenerStore.State.Starting -> Triple(
                 Glyph.Ellipsis, MytharaColors.Citron, "starting…",
@@ -203,7 +203,7 @@ fun LumiListenerPanel(vm: LumiListenerPanelViewModel = hiltViewModel()) {
 
         Spacer(Modifier.height(6.dp))
         Text(
-            text = "${Glyph.AccentBar} say \"Hey Lumi, <your question>\" — the listener transcribes locally with Vosk and submits only the matched query to MiniMax. Non-matching speech is dropped on the floor (never saved, never synced). Mutually exclusive with Observe mode at the mic hardware layer. **Recognition is unreliable** — Vosk's en-us small model doesn't know the proper noun \"Lumi\" and frequently mishears it (\"a me\", \"hello me\", etc.). The detector tries several common mishears but misses some. Best path until we add a Vosk grammar constraint: tap the mic button in chat and use push-to-talk instead.",
+            text = "${Glyph.AccentBar} say \"Hey Mythara, <your question>\" — the listener transcribes locally with Vosk and submits only the matched query to MiniMax. Non-matching speech is dropped on the floor (never saved, never synced). Mutually exclusive with Observe mode at the mic hardware layer. **Recognition is unreliable** — Vosk's en-us small model doesn't know the proper noun \"Mythara\" and frequently mishears it (\"a me\", \"hello me\", etc.). The detector tries several common mishears but misses some. Best path until we add a Vosk grammar constraint: tap the mic button in chat and use push-to-talk instead.",
             color = MytharaColors.FgDim,
             style = MaterialTheme.typography.bodySmall,
         )

@@ -45,7 +45,7 @@ class QuickTalkPanelViewModel @Inject constructor(
 }
 
 /**
- * Settings panel that exposes the "talk-to-Lumi persistent
+ * Settings panel that exposes the "talk-to-Mythara persistent
  * notification" toggle. When on, MytharaApp's cold-start hook posts
  * an ongoing notification with a Talk action that fires the same
  * ACTION_ASSIST path Pixel Buds touch-and-hold uses; tapping
@@ -68,7 +68,7 @@ fun QuickTalkPanel(vm: QuickTalkPanelViewModel = hiltViewModel()) {
             .padding(14.dp),
     ) {
         Text(
-            text = "${Glyph.DiamondOutline} talk to lumi (persistent)",
+            text = "${Glyph.DiamondOutline} talk to mythara (persistent)",
             style = MaterialTheme.typography.labelLarge.copy(color = MytharaColors.FgMute),
         )
         Spacer(Modifier.height(8.dp))
@@ -87,7 +87,7 @@ fun QuickTalkPanel(vm: QuickTalkPanelViewModel = hiltViewModel()) {
             )
             Spacer(Modifier.padding(end = 8.dp))
             Text(
-                text = "show 'talk to lumi' notification",
+                text = "show 'talk to mythara' notification",
                 color = MytharaColors.Fg,
                 style = MaterialTheme.typography.bodyMedium,
             )

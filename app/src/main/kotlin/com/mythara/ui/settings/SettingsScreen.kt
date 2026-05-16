@@ -367,14 +367,14 @@ fun SettingsScreen(
                     )
                     Spacer(Modifier.padding(end = 6.dp))
                     Text(
-                        text = "use elevenlabs for Lumi's voice",
+                        text = "use elevenlabs for Mythara's voice",
                         color = if (toggleEnabled) MytharaColors.Fg else MytharaColors.FgDim,
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
             }
             Text(
-                text = "${Glyph.AccentBar} when on, Lumi speaks via the ElevenLabs hosted voice (model eleven_turbo_v2_5) instead of the on-device Android TTS. Get a key at elevenlabs.io/app/settings/api-keys with at least 'Voices — Read' + 'Text to Speech' permissions. The voice dropdown is loaded from /v1/voices after a successful save & validate — pick any voice in your library. Falls back to Android TTS automatically if a call fails (network down, over quota).",
+                text = "${Glyph.AccentBar} when on, Mythara speaks via the ElevenLabs hosted voice (model eleven_turbo_v2_5) instead of the on-device Android TTS. Get a key at elevenlabs.io/app/settings/api-keys with at least 'Voices — Read' + 'Text to Speech' permissions. The voice dropdown is loaded from /v1/voices after a successful save & validate — pick any voice in your library. Falls back to Android TTS automatically if a call fails (network down, over quota).",
                 style = MaterialTheme.typography.bodySmall.copy(color = MytharaColors.FgDim),
                 modifier = Modifier.padding(top = 6.dp),
             )

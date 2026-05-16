@@ -68,7 +68,7 @@ import com.mythara.ui.theme.MytharaWordmark
 /**
  * How long the continuous-voice mode waits after the user stops
  * talking before sending the accumulated utterance to the agent.
- * Set per user request: lets multi-clause thoughts ("Hey Lumi,
+ * Set per user request: lets multi-clause thoughts ("Hey Mythara,
  * what's the weather, actually also tell me ...") concatenate
  * before the agent fires.
  */
@@ -125,10 +125,10 @@ fun ChatScreen(
     // didn't get right:
     //   1. Submit-on-pause, not submit-on-Final. Soda's idea of
     //      end-of-utterance fires after ~1-2s of silence; the user
-    //      wanted a 5s window so multi-sentence thoughts ("Hey Lumi,
+    //      wanted a 5s window so multi-sentence thoughts ("Hey Mythara,
     //      ... actually, can you also ...") concatenate into one
     //      query before the agent kicks in.
-    //   2. Mute the mic while Lumi is speaking out loud. Otherwise
+    //   2. Mute the mic while Mythara is speaking out loud. Otherwise
     //      the on-device recogniser transcribes the assistant's own
     //      TTS reply and the loop runs away from itself. We key the
     //      LaunchedEffect on `!ui.speaking` so the recogniser is torn
@@ -151,7 +151,7 @@ fun ChatScreen(
             permLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return@LaunchedEffect
         }
-        // Coordinate with the mic broker so Observe / Lumi-listen can't
+        // Coordinate with the mic broker so Observe / Mythara-listen can't
         // steal the mic mid-utterance. If acquire fails, flip the toggle
         // back off — UI will then show the conflict via the same flow.
         if (!vm.micBroker.acquire(MicBroker.Client.CONTINUOUS_CHAT)) {
@@ -233,7 +233,7 @@ fun ChatScreen(
                 return@collect
             }
             if (ui.thinking || ui.speaking) {
-                // Lumi is mid-reply; ignore the tap. Dropping > queuing
+                // Mythara is mid-reply; ignore the tap. Dropping > queuing
                 // because the user would be confused if a tap from 10
                 // seconds ago suddenly opened the mic right after
                 // hearing the previous answer.
@@ -342,7 +342,7 @@ fun ChatScreen(
                     items = ui.items,
                     streaming = ui.streaming,
                     // Show the gradient-rolodex thinking indicator at
-                    // the bottom of the timeline while Lumi is working
+                    // the bottom of the timeline while Mythara is working
                     // but the first streamed token hasn't landed yet.
                     // Once streaming text shows, the indicator hides
                     // so the user reads the actual reply.
@@ -535,7 +535,7 @@ private fun ChatMenuItem(
 
 /**
  * Compact timeline card for a logged interaction with a contact —
- * who Lumi called / messaged / looked up, and when. Interleaved into
+ * who Mythara called / messaged / looked up, and when. Interleaved into
  * the scrollback by the interaction's timestamp.
  */
 @Composable

@@ -31,14 +31,14 @@ import kotlin.coroutines.resumeWithException
  *    audio file first and play it locally via [MediaPlayer]. Mixing
  *    that path into the synchronous TTS wrapper would muddy state.
  *  - The Android engine carries fallback value: even on a bad-network
- *    day or API error, the user still hears Lumi. [Tts] keeps the
+ *    day or API error, the user still hears Mythara. [Tts] keeps the
  *    Android engine as the always-available baseline.
  *
  * Flow:
  *   1. POST /v1/text-to-speech/{voice_id} with the text + voice
  *      settings → ElevenLabs streams back MP3 bytes.
  *   2. We buffer the response to filesDir/tts/<ts>.mp3 (small files;
- *      typical Lumi reply is ~5-20 KB at 64kbps).
+ *      typical Mythara reply is ~5-20 KB at 64kbps).
  *   3. MediaPlayer plays the file. We expose start/completion via
  *      a single suspend `speak()` that resumes when playback ends.
  *

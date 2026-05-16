@@ -41,7 +41,7 @@ import com.mythara.ui.theme.MytharaColors
  *   4. Saving / error
  *
  * Mic conflict messaging: if AudioRecord init fails (because Observe
- * / Lumi-listen / continuous-chat is holding it), the VM surfaces a
+ * / Mythara-listen / continuous-chat is holding it), the VM surfaces a
  * clear error and we route the user to close those modes first.
  */
 @Composable

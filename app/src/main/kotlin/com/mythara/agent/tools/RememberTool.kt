@@ -17,7 +17,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * `remember` — durably store something the user explicitly asked Lumi
+ * `remember` — durably store something the user explicitly asked Mythara
  * to remember.
  *
  * This is the tool to reach for whenever the user says "remember

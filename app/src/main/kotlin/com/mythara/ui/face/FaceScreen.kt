@@ -118,7 +118,7 @@ private val EYE_GLOW = Color(0xFFE4FBFF)   // near-white cyan — the eye cores
  * the eye-open probabilities drive its blink — so the avatar mirrors
  * you in real time. Without the camera (or with no face in frame) it
  * falls back to a gentle idle sway + self-driven blink. The lower lip
- * still drops open while Lumi is speaking. Pure Compose Canvas.
+ * still drops open while Mythara is speaking. Pure Compose Canvas.
  */
 @Composable
 fun FaceScreen(onBack: () -> Unit, vm: FaceViewModel = hiltViewModel()) {

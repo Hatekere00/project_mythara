@@ -55,7 +55,7 @@ class CalendarPreAnnounceViewModel @Inject constructor(
 }
 
 /**
- * Toggle: should Lumi announce a "<title> in 3 minutes — get ready"
+ * Toggle: should Mythara announce a "<title> in 3 minutes — get ready"
  * line 3 minutes before every calendar event?
  *
  * Default OFF — opt-in. When ON, a 15-min periodic scanner walks the
@@ -110,7 +110,7 @@ fun CalendarPreAnnouncePanel(vm: CalendarPreAnnounceViewModel = hiltViewModel())
 
         Spacer(Modifier.height(6.dp))
         Text(
-            text = "${Glyph.AccentBar} when ON, Lumi reads upcoming events from your calendars and announces \"<title> in 3 minutes — get ready\" exactly 3 minutes before each one. Speaks via TTS by default; if Music Mode is on, plays the announcement as the secret-language tone phrase instead. Skips all-day events. Reads CalendarContract — needs the Calendar permission, which you grant via Settings → Apps → Mythara → Permissions.",
+            text = "${Glyph.AccentBar} when ON, Mythara reads upcoming events from your calendars and announces \"<title> in 3 minutes — get ready\" exactly 3 minutes before each one. Speaks via TTS by default; if Music Mode is on, plays the announcement as the secret-language tone phrase instead. Skips all-day events. Reads CalendarContract — needs the Calendar permission, which you grant via Settings → Apps → Mythara → Permissions.",
             style = MaterialTheme.typography.bodySmall.copy(color = MytharaColors.FgDim),
         )
     }

@@ -91,7 +91,7 @@ fun AllowlistPanel(vm: AllowlistPanelViewModel = hiltViewModel()) {
 
         if (entries.isEmpty()) {
             Text(
-                text = "${Glyph.AccentBar} nothing here. when Lumi asks 'send SMS to mom?' you can tick 'always allow this' to skip the prompt for future identical calls. listed here, revocable per row.",
+                text = "${Glyph.AccentBar} nothing here. when Mythara asks 'send SMS to mom?' you can tick 'always allow this' to skip the prompt for future identical calls. listed here, revocable per row.",
                 color = MytharaColors.FgDim,
                 style = MaterialTheme.typography.bodySmall,
             )

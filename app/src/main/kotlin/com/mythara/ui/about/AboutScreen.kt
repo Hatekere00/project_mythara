@@ -136,9 +136,23 @@ fun AboutScreen(
 
         Spacer(Modifier.height(12.dp))
 
+        Panel("created by") {
+            Text(
+                "Mythara is your personal field intelligence agent.",
+                color = MytharaColors.Fg, style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Built by Ankur (Creator) using Lumi — the powerful mother-ship AI platform Ankur built at CES.",
+                color = MytharaColors.FgMute, style = MaterialTheme.typography.bodySmall,
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+
         Panel("credits") {
             Text(
-                "MiniMax · Charmbracelet (Crush aesthetic) · JetBrains Mono · AndroidX",
+                "MiniMax · Charmbracelet (Crush aesthetic) · JetBrains Mono · AndroidX · Shizuku",
                 color = MytharaColors.FgMute, style = MaterialTheme.typography.bodySmall,
             )
         }

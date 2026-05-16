@@ -160,7 +160,7 @@ class AgentLoop @Inject constructor(
         //      just-spoken / just-typed user input. Lives in a vault
         //      record written by ChatMoodTracker microseconds before
         //      we get here. This is the DOMINANT signal for the
-        //      current turn — Lumi adapts THIS reply to it.
+        //      current turn — Mythara adapts THIS reply to it.
         //   2. moodTrend — 6-hour windowed dominant mood. Background
         //      relational context ("user has been stressed lately").
         // The system message renders both when present, with the
@@ -215,7 +215,7 @@ class AgentLoop @Inject constructor(
         )
 
         // Conversational system prompt — applied to EVERY turn now,
-        // not just voice. Lumi's whole personality is voice-first; a
+        // not just voice. Mythara's whole personality is voice-first; a
         // long markdown-heavy answer is wrong even when typed because
         // the user may have spoken queries upstream or downstream and
         // we want consistency. Length floor is the same regardless of
@@ -357,7 +357,7 @@ class AgentLoop @Inject constructor(
                             "  - app_hint=\"whatsapp\" (or \"telegram\" / \"signal\", or leave blank to match any messenger bucket)\n" +
                             "  - max_age_seconds=120 for a fresh notification arrival (use 60 if very recent, up to 600 if reviewing older history)\n" +
                             "  - focus parameter to bias the vision description if needed (e.g. focus=\"describe subject, scene, and any visible text\")\n" +
-                            "Composing a reply without having read the image is a hard failure — the user will hear 'you sent a photo' and know Lumi never looked. Do NOT try to tap the image in the chat or expand it; the gallery-pull tool gives you the full-resolution file directly.\n\n" +
+                            "Composing a reply without having read the image is a hard failure — the user will hear 'you sent a photo' and know Mythara never looked. Do NOT try to tap the image in the chat or expand it; the gallery-pull tool gives you the full-resolution file directly.\n\n" +
                             "What to do — IN THIS ORDER, every time:\n" +
                             "  1. Read the conversation history. The notification body is one line; you need the back-and-forth context before you reply. Steps:\n" +
                             "       a. open_app on ${parsed.app} — lands you in the messaging app. For WhatsApp the chat with the new message is almost always at the top of the chat list. Call open_app; do not preface with a question.\n" +
@@ -1073,7 +1073,7 @@ class AgentLoop @Inject constructor(
             parts.add("Recent context worth weaving in if naturally relevant: " + keyPoints.joinToString("; "))
         }
         if (parts.isEmpty()) return ""
-        return "\n\n— What Lumi knows about ${profile.displayName} —\n" + parts.joinToString("\n") + "\n\n" +
+        return "\n\n— What Mythara knows about ${profile.displayName} —\n" + parts.joinToString("\n") + "\n\n" +
             "HOW TO USE THIS:\n" +
             "  • TUNE the reply, never paraphrase the profile back. Don't recite the list, don't mention 'I know you have high openness', don't act on traits as facts. They're SUBTLE register hints.\n" +
             "  • Concrete tuning recipes from the Big Five:\n" +

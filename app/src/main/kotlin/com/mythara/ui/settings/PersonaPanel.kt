@@ -223,7 +223,7 @@ fun PersonaPanel(vm: PersonaPanelViewModel = hiltViewModel()) {
 
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "${Glyph.AccentBar} when on, every 24 hours Mythara reads your phone's usage statistics (which apps were foregrounded, for how long, when) and writes summary traits to Lumi's memory — 'top apps today', 'screen time bucket', 'morning-active vs night-owl', 'compulsive-checker vs deep-focus'. These traits sync to your GitHub backup like every other vault record and are surfaced via semantic recall on relevant chat turns so Lumi knows you. Granular per-app history stays on the system level; we only persist the daily summaries.",
+            text = "${Glyph.AccentBar} when on, every 24 hours Mythara reads your phone's usage statistics (which apps were foregrounded, for how long, when) and writes summary traits to Mythara's memory — 'top apps today', 'screen time bucket', 'morning-active vs night-owl', 'compulsive-checker vs deep-focus'. These traits sync to your GitHub backup like every other vault record and are surfaced via semantic recall on relevant chat turns so Mythara knows you. Granular per-app history stays on the system level; we only persist the daily summaries.",
             color = MytharaColors.FgDim,
             style = MaterialTheme.typography.bodySmall,
         )

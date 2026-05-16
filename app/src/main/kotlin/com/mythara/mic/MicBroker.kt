@@ -13,7 +13,7 @@ import javax.inject.Singleton
 
 /**
  * Process-wide coordinator for the single Android `AudioRecord`
- * resource. The app has multiple mic clients (Observe, Lumi-listen
+ * resource. The app has multiple mic clients (Observe, Mythara-listen
  * wake-word, continuous voice chat) and Android only allows one to
  * hold the mic at a time. Before this broker existed, conflicts
  * surfaced as cryptic init failures after the user toggled — the
@@ -43,7 +43,7 @@ class MicBroker @Inject constructor(
     enum class Client {
         /** ObserveForegroundService — passive learning loop. */
         OBSERVE,
-        /** LumiListenerService — always-on "Hey Lumi" wake-word. */
+        /** LumiListenerService — always-on "Hey Mythara" wake-word. */
         LUMI_LISTEN,
         /** ChatScreen continuous voice mode (Pixel Soda). */
         CONTINUOUS_CHAT,
@@ -130,7 +130,7 @@ class MicBroker @Inject constructor(
     /** Human-readable label for use in UI error messages. */
     fun describe(client: Client): String = when (client) {
         Client.OBSERVE -> "Observe mode"
-        Client.LUMI_LISTEN -> "Lumi wake-word listener"
+        Client.LUMI_LISTEN -> "Mythara wake-word listener"
         Client.CONTINUOUS_CHAT -> "continuous voice chat"
         Client.RESONANCE -> "Resonance mode acoustic sample"
     }

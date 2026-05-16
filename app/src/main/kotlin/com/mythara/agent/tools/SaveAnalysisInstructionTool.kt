@@ -13,7 +13,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * `save_analysis_instruction` — teach Lumi a new way to conduct
+ * `save_analysis_instruction` — teach Mythara a new way to conduct
  * personality / relationship analysis.
  *
  * This is how the analysis pipeline self-evolves. The agent reads an
@@ -22,7 +22,7 @@ import javax.inject.Singleton
  * into a concrete instruction, and saves it here. The instruction is
  * then automatically prepended to the relevant Gemma prompts in the
  * persona / contact-analysis / self-profile passes — no code change,
- * the analysis genuinely changes based on what Lumi has learned.
+ * the analysis genuinely changes based on what Mythara has learned.
  */
 @Singleton
 class SaveAnalysisInstructionTool @Inject constructor(
@@ -32,7 +32,7 @@ class SaveAnalysisInstructionTool @Inject constructor(
     override val name: String = "save_analysis_instruction"
 
     override val description: String =
-        "Teach Lumi a new way to conduct personality/relationship analysis. Use this after web_fetch-ing an " +
+        "Teach Mythara a new way to conduct personality/relationship analysis. Use this after web_fetch-ing an " +
             "analysis technique you want to adopt, or when the user describes how they want their analysis done. " +
             "The `instruction` is stored durably and is automatically injected into future analysis passes " +
             "(persona, per-contact relationship analysis, the user's own Big Five) — so the analysis evolves. " +

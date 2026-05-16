@@ -69,7 +69,7 @@ class PlaceCallDirectTool @Inject constructor(
         return ConfirmationGate.ConfirmRequest(
             id = "", toolName = name,
             title = "Call $number?",
-            body = "Lumi will initiate the call immediately — no dialer in between.",
+            body = "Mythara will initiate the call immediately — no dialer in between.",
             allowlistKey = if (number.isNotEmpty()) "${name}:$number" else null,
         )
     }

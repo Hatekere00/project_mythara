@@ -101,7 +101,7 @@ import javax.inject.Inject
  *    re-ranked from the daily contact analysis
  *  - suggested apps — from on-device usage stats
  *  - heart-rate ↔ contact correlations, device sensors, and the
- *    facts the user explicitly asked Lumi to remember
+ *    facts the user explicitly asked Mythara to remember
  *
  * Read-only — the background workers populate the vault; this screen
  * surfaces the digest. The header refresh also kicks a self-profile
@@ -581,7 +581,7 @@ fun AboutMeScreen(
         )
         Spacer(Modifier.height(4.dp))
         Text(
-            text = "${Glyph.AccentBar} everything Lumi has learned about you · ${ui.vaultTotal} learnings",
+            text = "${Glyph.AccentBar} everything Mythara has learned about you · ${ui.vaultTotal} learnings",
             style = MaterialTheme.typography.bodySmall.copy(color = MytharaColors.FgDim),
         )
 
@@ -845,10 +845,10 @@ fun AboutMeScreen(
 
         Spacer(Modifier.height(12.dp))
 
-        // 9) What Lumi remembers.
-        Panel("what Lumi remembers") {
+        // 9) What Mythara remembers.
+        Panel("what Mythara remembers") {
             if (ui.knownFacts.isEmpty()) {
-                Empty("Nothing yet — say \"remember that…\" and Lumi will keep it here.")
+                Empty("Nothing yet — say \"remember that…\" and Mythara will keep it here.")
             } else {
                 ui.knownFacts.forEachIndexed { i, line ->
                     if (i > 0) Spacer(Modifier.height(6.dp))

@@ -101,7 +101,7 @@ fun RecallPanel(vm: RecallPanelViewModel = hiltViewModel()) {
 
         Spacer(Modifier.height(6.dp))
         Text(
-            text = "${Glyph.AccentBar} when on, every chat turn sends top-6 relevant Observe facts and your recent mood trend to MiniMax as system-prompt context. Lumi can reference things you said weeks ago and adapt her tone. When off, only the message you typed/spoke leaves the device — chat is 'pure' MiniMax with no local-memory augmentation.",
+            text = "${Glyph.AccentBar} when on, every chat turn sends top-6 relevant Observe facts and your recent mood trend to MiniMax as system-prompt context. Mythara can reference things you said weeks ago and adapt her tone. When off, only the message you typed/spoke leaves the device — chat is 'pure' MiniMax with no local-memory augmentation.",
             color = MytharaColors.FgDim,
             style = MaterialTheme.typography.bodySmall,
         )

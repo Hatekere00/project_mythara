@@ -55,7 +55,7 @@ class UserNamePanelViewModel @Inject constructor(
 
 /**
  * "What should I call you?" panel. Persists the user's preferred
- * name; AgentLoop injects it as a one-line system message so Lumi
+ * name; AgentLoop injects it as a one-line system message so Mythara
  * uses it sparingly (greetings, callbacks) — never sycophantically.
  *
  * Empty value clears the preference and reverts the agent to
@@ -124,7 +124,7 @@ fun UserNamePanel(vm: UserNamePanelViewModel = hiltViewModel()) {
 
         Spacer(Modifier.height(6.dp))
         Text(
-            text = "${Glyph.AccentBar} Lumi will use this name sparingly — as a greeting, acknowledgement, or occasional callback. Never sycophantically. Leave blank to stay generic.",
+            text = "${Glyph.AccentBar} Mythara will use this name sparingly — as a greeting, acknowledgement, or occasional callback. Never sycophantically. Leave blank to stay generic.",
             color = MytharaColors.FgDim,
             style = MaterialTheme.typography.bodySmall,
         )

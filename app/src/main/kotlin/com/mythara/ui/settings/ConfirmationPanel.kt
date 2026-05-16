@@ -98,7 +98,7 @@ fun ConfirmationPanel(vm: ConfirmationPanelViewModel = hiltViewModel()) {
         val explainer = if (alwaysConfirm) {
             "${Glyph.AccentBar} paranoid mode — every destructive tool call pops a confirmation dialog. Tap 'always allow this' in the dialog to skip future prompts for the SAME action+target."
         } else {
-            "${Glyph.AccentBar} direct mode — when you say 'text mom <message>' Lumi sends immediately, no popup. Tap / swipe / type fire silently too. Trust + speed; flip on if you want every action gated."
+            "${Glyph.AccentBar} direct mode — when you say 'text mom <message>' Mythara sends immediately, no popup. Tap / swipe / type fire silently too. Trust + speed; flip on if you want every action gated."
         }
         Text(
             text = explainer,
