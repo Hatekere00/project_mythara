@@ -1,35 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Mythara MINIMAL — Watch Face Format.
+  Mythara MINIMAL — Watch Face Format v2.
 
   Optimised for battery + glance-readability. Companion to Mythara
   Tactical (the cockpit face); same brand mark, opposite philosophy:
-  every pixel earns its place, every animation is removed.
+  every pixel earns its place, every animation removed.
 
   INTERACTIVE:
     • Black background (full-frame OLED off).
-    • Mythara rose centred at canvas-top-third — the brand mark is
-      the focal element. No rotation, no pulse — saves animation
-      power AND removes the "is this thing alive?" question (yes,
-      that's the brand mark, not a status indicator).
-    • Time HH:MM in a clean digital readout below the rose. Large
-      type, lavender on black for maximum contrast.
-    • Two complication slots at the bottom corners (default: HR
-      left, battery right). User can long-press the face to swap
-      either to date / steps / agenda / Mythara insight.
+    • Mythara rose centred at canvas-upper-third — the brand mark
+      is the focal element. No rotation, no pulse.
+    • Time HH:MM in a clean digital readout below the rose. Large,
+      lavender on black for maximum contrast.
+    • Compact MYTHARA wordmark below the time.
+    • Two complication slots at the bottom: HR (left), battery (right).
 
   AMBIENT (AOD / power-save):
     • Time HH:MM only, dimmer (charple instead of lavender) so it
-      doesn't dominate at night and so the OLED burn-in risk is
-      lower.
-    • Rose collapses to a tiny outline above the time (just enough
-      brand recognition to know whose face this is at a glance,
-      <2% lit pixels).
-    • All complications hidden — AOD is for the time, period.
+      doesn't dominate at night.
+    • Rose collapses to a small outline above the time. Just enough
+      brand recognition.
+    • All other elements hidden — AOD is for the time.
 
-  Resource-only; the Wear OS renderer draws everything. <Image>
-  assets are raster PNGs (just `rose` + `preview`). Validated
-  against WFF format version 2.
+  Schema notes:
+    • <TimeText> requires a child <Font> for colour/size.
+    • <ComplicationSlot> uses supportedTypes as an XML attribute
+      ("SHORT_TEXT EMPTY"), NOT a <SupportedTypes> child block.
+    • <Complication> requires type="..." matching one of those.
 -->
 <WatchFace width="450" height="450">
     <Metadata key="CLOCK_TYPE" value="DIGITAL" />
@@ -40,86 +37,94 @@
         <!-- ============ INTERACTIVE ============ -->
 
         <!-- Brand mark: 180×180 rose centred horizontally in the upper
-             third of the face. Hidden in ambient (a tiny outline takes
-             its place below — see AMBIENT section). -->
+             third of the face. Hidden in ambient (a small outline below
+             takes its place). -->
         <PartImage x="135" y="60" width="180" height="180">
             <Variant mode="AMBIENT" target="alpha" value="0" />
             <Image resource="rose" />
         </PartImage>
 
-        <!-- Time HH:MM — interactive variant. Large, lavender. -->
-        <DigitalClock x="0" y="245" width="450" height="100">
+        <!-- Time HH:MM — interactive variant. Large lavender. -->
+        <DigitalClock x="0" y="248" width="450" height="100">
             <Variant mode="AMBIENT" target="alpha" value="0" />
-            <TimeText format="HH:mm" align="CENTER" size="96" color="#ff9b86ff" />
+            <TimeText format="hh:mm" hourFormat="24" align="CENTER"
+                x="0" y="0" width="450" height="100">
+                <Font family="SYNC_TO_DEVICE" size="80" weight="NORMAL"
+                    slant="NORMAL" color="#ff9b86ff" />
+            </TimeText>
         </DigitalClock>
 
-        <!-- Brand wordmark beneath the time. Very small, dim. Hidden in
-             ambient (saves pixels). -->
-        <PartText x="0" y="358" width="450" height="20">
+        <!-- Brand wordmark beneath the time. Hidden in ambient. -->
+        <PartText x="0" y="360" width="450" height="22">
             <Variant mode="AMBIENT" target="alpha" value="0" />
-            <Text align="CENTER" size="14" color="#ff8e8a95">MYTHARA</Text>
+            <Text align="CENTER">
+                <Font family="SYNC_TO_DEVICE" size="14" weight="NORMAL"
+                    slant="NORMAL" color="#ff8e8a95"><![CDATA[MYTHARA]]></Font>
+            </Text>
         </PartText>
 
         <!-- Complication slot 1 — bottom-left. Default: heart rate.
              User can swap via long-press + edit. Hidden in ambient. -->
-        <ComplicationSlot x="50" y="385" width="80" height="60" slotId="1">
-            <Variant mode="AMBIENT" target="alpha" value="0" />
-            <BoundingOval x="0" y="0" width="80" height="60" />
+        <ComplicationSlot slotId="1" x="50" y="385" width="100" height="50"
+            supportedTypes="SHORT_TEXT EMPTY">
+            <BoundingOval x="0" y="0" width="100" height="50" />
             <DefaultProviderPolicy
                 defaultSystemProvider="HEART_RATE"
                 defaultSystemProviderType="SHORT_TEXT" />
-            <SupportedTypes>
-                <Type name="SHORT_TEXT" />
-                <Type name="RANGED_VALUE" />
-                <Type name="ICON" />
-            </SupportedTypes>
-            <Complication>
-                <PartText x="0" y="20" width="80" height="20">
-                    <Text align="CENTER" size="16" color="#ffeb4268">[COMPLICATION.TEXT]</Text>
+            <Complication type="SHORT_TEXT">
+                <PartText x="0" y="0" width="100" height="50">
+                    <Variant mode="AMBIENT" target="alpha" value="0" />
+                    <Text align="CENTER">
+                        <Font family="SYNC_TO_DEVICE" size="18" weight="NORMAL"
+                            slant="NORMAL" color="#ffeb4268">
+                            <Template><![CDATA[%s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
+                        </Font>
+                    </Text>
                 </PartText>
             </Complication>
+            <Complication type="EMPTY" />
         </ComplicationSlot>
 
-        <!-- Complication slot 2 — bottom-right. Default: watch battery.
-             User can swap via long-press + edit. Hidden in ambient. -->
-        <ComplicationSlot x="320" y="385" width="80" height="60" slotId="2">
-            <Variant mode="AMBIENT" target="alpha" value="0" />
-            <BoundingOval x="0" y="0" width="80" height="60" />
+        <!-- Complication slot 2 — bottom-right. Default: watch battery. -->
+        <ComplicationSlot slotId="2" x="300" y="385" width="100" height="50"
+            supportedTypes="SHORT_TEXT EMPTY">
+            <BoundingOval x="0" y="0" width="100" height="50" />
             <DefaultProviderPolicy
                 defaultSystemProvider="WATCH_BATTERY"
                 defaultSystemProviderType="SHORT_TEXT" />
-            <SupportedTypes>
-                <Type name="SHORT_TEXT" />
-                <Type name="RANGED_VALUE" />
-                <Type name="ICON" />
-            </SupportedTypes>
-            <Complication>
-                <PartText x="0" y="20" width="80" height="20">
-                    <Text align="CENTER" size="16" color="#ff68ffd6">[COMPLICATION.TEXT]</Text>
+            <Complication type="SHORT_TEXT">
+                <PartText x="0" y="0" width="100" height="50">
+                    <Variant mode="AMBIENT" target="alpha" value="0" />
+                    <Text align="CENTER">
+                        <Font family="SYNC_TO_DEVICE" size="18" weight="NORMAL"
+                            slant="NORMAL" color="#ff68ffd6">
+                            <Template><![CDATA[%s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
+                        </Font>
+                    </Text>
                 </PartText>
             </Complication>
+            <Complication type="EMPTY" />
         </ComplicationSlot>
 
         <!-- ============ AMBIENT (AOD) ============ -->
-        <!-- Everything below is alpha=0 in interactive, alpha=255 in
-             ambient — a strict crossover, never visible together with
-             the interactive layers above. Minimal lit pixels for OLED
-             burn-in + battery. -->
+        <!-- Everything below starts at alpha=0 (interactive); a
+             Variant flips it to 255 when ambient mode engages. -->
 
         <!-- Tiny rose outline above the time — just enough brand
-             recognition. Same drawable, scaled down, dimmed via a low
-             grey colour so it reads as an outline. -->
+             recognition. Same drawable, scaled down. -->
         <PartImage x="200" y="160" width="50" height="50" alpha="0">
             <Variant mode="AMBIENT" target="alpha" value="255" />
             <Image resource="rose" />
         </PartImage>
 
-        <!-- Time HH:MM — ambient variant. Charple instead of lavender;
-             slightly smaller; centred. Dim and small to minimise lit
-             pixels while still being glanceable. -->
-        <DigitalClock x="0" y="220" width="450" height="80" alpha="0">
+        <!-- Time HH:MM — ambient variant. Charple, smaller. -->
+        <DigitalClock x="0" y="225" width="450" height="80" alpha="0">
             <Variant mode="AMBIENT" target="alpha" value="255" />
-            <TimeText format="HH:mm" align="CENTER" size="72" color="#ff8a6fff" />
+            <TimeText format="hh:mm" hourFormat="24" align="CENTER"
+                x="0" y="0" width="450" height="80">
+                <Font family="SYNC_TO_DEVICE" size="64" weight="NORMAL"
+                    slant="NORMAL" color="#ff8a6fff" />
+            </TimeText>
         </DigitalClock>
     </Scene>
 </WatchFace>
