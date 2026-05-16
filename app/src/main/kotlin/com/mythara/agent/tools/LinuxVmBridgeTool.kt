@@ -1,5 +1,6 @@
 package com.mythara.agent.tools
 
+import android.os.Build
 import android.util.Log
 import com.jcraft.jsch.ChannelExec
 import com.jcraft.jsch.JSch
@@ -7,6 +8,9 @@ import com.jcraft.jsch.Session
 import com.mythara.agent.Tool
 import com.mythara.agent.ToolResult
 import com.mythara.data.LinuxBridgeStore
+import com.mythara.linux.VmCidDiscovery
+import com.mythara.linux.VsockChannel
+import com.mythara.linux.VsockProxy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
@@ -129,7 +133,14 @@ class LinuxVmBridgeTool @Inject constructor(
         command: String,
         timeoutMs: Int,
     ): ToolResult {
-        Log.d(TAG, "JSch connecting ${cfg.user}@${cfg.host}:${cfg.port}")
+        val useVsock = cfg.host.equals("vsock", ignoreCase = true) ||
+            cfg.host.startsWith("vsock://", ignoreCase = true) ||
+            cfg.host.startsWith("vsock:", ignoreCase = true)
+        Log.d(
+            TAG,
+            "JSch connecting ${cfg.user}@${cfg.host}:${cfg.port} " +
+                "transport=${if (useVsock) "vsock" else "tcp"}",
+        )
         val jsch = JSch()
 
         // Identity (private key) is preferred when set. JSch accepts
@@ -150,7 +161,27 @@ class LinuxVmBridgeTool @Inject constructor(
             }
         }
 
-        val session: Session = jsch.getSession(cfg.user, cfg.host, cfg.port)
+        // For vsock transport, JSch's host arg is decorative — the
+        // real address (cid, port) lives in VsockProxy. We pass
+        // "vsock-target" so any log line that prints host shows
+        // something readable.
+        val sessionHost = if (useVsock) "vsock-target" else cfg.host
+        val session: Session = jsch.getSession(cfg.user, sessionHost, cfg.port)
+
+        if (useVsock) {
+            if (!VsockChannel.SUPPORTED) {
+                return ToolResult.fail(
+                    "vsock_unsupported: requires Android 14+; this device is on API ${Build.VERSION.SDK_INT}",
+                )
+            }
+            val cid = VmCidDiscovery.discover()
+                ?: return ToolResult.fail(
+                    "vm_not_running: no crosvm_debian process found. Open the Linux Terminal app to start the VM, then retry.",
+                )
+            Log.d(TAG, "vsock transport — cid=$cid sshPort=${cfg.port}")
+            session.setProxy(VsockProxy(cid = cid, sshPort = cfg.port))
+        }
+
         if (cfg.privateKeyPem.isNullOrBlank() && !cfg.password.isNullOrBlank()) {
             session.setPassword(cfg.password)
         }
@@ -163,7 +194,15 @@ class LinuxVmBridgeTool @Inject constructor(
             put("PreferredAuthentications", if (!cfg.privateKeyPem.isNullOrBlank()) "publickey,password" else "password,publickey")
         }
         session.setConfig(props)
-        session.connect(CONNECT_TIMEOUT_MS)
+        try {
+            session.connect(CONNECT_TIMEOUT_MS)
+        } catch (t: Throwable) {
+            // On vsock connect-failure, invalidate the CID cache so
+            // the next attempt re-scans /proc — covers the case where
+            // the VM was restarted with a new CID.
+            if (useVsock) VmCidDiscovery.invalidate()
+            throw t
+        }
         Log.d(TAG, "JSch session connected; opening exec channel")
 
         try {
@@ -197,15 +236,14 @@ class LinuxVmBridgeTool @Inject constructor(
 
     private fun setupCard(): String =
         """{"status":"not_configured","setup_steps":[
-            "1. On Android 15, open Settings → Developer options → 'Linux development environment' and install the Debian VM.",
+            "1. On Android 15+, open Settings → Developer options → 'Linux development environment' and install the Debian VM.",
             "2. Open the new Terminal app from the launcher.",
             "3. Inside the VM, run: sudo apt update && sudo apt install -y openssh-server",
-            "4. Make sshd listen on all interfaces: echo 'ListenAddress 0.0.0.0' | sudo tee -a /etc/ssh/sshd_config",
-            "5. Start sshd: sudo service ssh start (or 'sudo systemctl enable --now ssh')",
-            "6. CRITICAL — bridge VM port 22 to Android host: open the Terminal app's menu (top-left) → 'Port forwarding' → add port 22. The Linux Terminal uses vsock, NOT a TCP/IP bridge, so this port-forwarding entry is what makes the VM's sshd reachable from Android at 127.0.0.1:22.",
-            "7. (Recommended) Generate an SSH key: ssh-keygen -t ed25519 -f ~/mythara_key -N '' && cat ~/mythara_key.pub >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && cat ~/mythara_key",
-            "8. Open Mythara → Settings → 'linux bridge'. Set host=127.0.0.1, port=22, user=droid, paste the private key (BEGIN/END block) into the key field. Save.",
-            "9. Retry this command."
+            "4. Start sshd: sudo service ssh start (or 'sudo systemctl enable --now ssh')",
+            "5. (Recommended) Generate an SSH key: ssh-keygen -t ed25519 -f ~/mythara_key -N '' && cat ~/mythara_key.pub >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && cat ~/mythara_key",
+            "6. Open Mythara → Settings → 'linux bridge'. RECOMMENDED: set host='vsock' — Mythara will open a vsock socket directly to the VM (zero port-forwarding setup required). Set port=22, user=droid, paste the private key into the key field. Save.",
+            "7. Retry this command.",
+            "8. (Fallback for Android 13 and older, which don't expose vsock) Inside the Terminal app's menu → 'Port forwarding' → add port 22, then set host=127.0.0.1 in Mythara instead of 'vsock'."
         ]}""".trimIndent()
 
     private fun JsonPrimitive.contentOrNull(): String? = runCatching { content }.getOrNull()

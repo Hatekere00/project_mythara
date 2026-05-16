@@ -57,7 +57,12 @@ class LinuxBridgeStore @Inject constructor(
 
     fun configFlow(): Flow<Config> = ctx.linuxBridgeDataStore.data.map { prefs ->
         Config(
-            host = prefs[keyHost] ?: "127.0.0.1",
+            // Default host is 'vsock' (Capability Expansion v2 phase C) —
+            // Mythara opens a vsock socket directly to the Linux Terminal
+            // VM without needing the Terminal app's port-forwarding UI.
+            // Users on Android 13 and older should change this to
+            // 127.0.0.1 after configuring port-forwarding manually.
+            host = prefs[keyHost] ?: "vsock",
             port = prefs[keyPort]?.toIntOrNull() ?: 22,
             user = prefs[keyUser] ?: "droid",
             password = prefs[keyPass]?.ifBlank { null },

@@ -115,12 +115,12 @@ fun LinuxBridgePanel(vm: LinuxBridgeViewModel = hiltViewModel()) {
         )
         Spacer(Modifier.height(6.dp))
         Text(
-            text = "${Glyph.AccentBar} setup: (a) inside the Linux Terminal, " +
+            text = "${Glyph.AccentBar} setup (Android 14+): (a) inside the Linux Terminal, " +
                 "`sudo apt install openssh-server && sudo service ssh start`. " +
-                "(b) in the Terminal app's menu → 'Port forwarding' → add port 22 — " +
-                "the VM uses vsock, NOT a TCP/IP bridge, so this is what makes sshd " +
-                "reachable from Android at 127.0.0.1:22. (c) paste host=127.0.0.1, " +
-                "port=22, user=droid, plus key or password below.",
+                "(b) set host='vsock' below — Mythara opens a vsock socket directly " +
+                "to the VM, NO port-forwarding setup required. The Terminal app's " +
+                "port-forwarding screen is only needed as a fallback on Android 13 " +
+                "and older. Port=22, user=droid, plus key or password.",
             color = MytharaColors.FgDim,
             style = MaterialTheme.typography.bodySmall,
         )
