@@ -185,6 +185,14 @@ fun MytharaRoot(
                     // lives at the root so it can render above
                     // every NavHost destination.
                     var spotlightOpen by remember { mutableStateOf(false) }
+                    // Two-row layout: status bar TAKES its own row
+                    // at the top (so screen content beneath isn't
+                    // overlapped by it), then the active layout +
+                    // overlays fill the remaining space below.
+                    androidx.compose.foundation.layout.Column(
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                    MytharaStatusBar()
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -388,16 +396,8 @@ fun MytharaRoot(
                         )
                     }
 
-                    // Mythara's own status strip — drawn LAST in the
-                    // Box so it sits on TOP of every NavHost
-                    // destination + every overlay (popup amulet,
-                    // spotlight). The system status bar is hidden
-                    // by MainActivity's WindowInsetsController so
-                    // this 24dp strip replaces it, showing clock +
-                    // battery + charging indicator.
-                    MytharaStatusBar(
-                        modifier = Modifier.align(Alignment.TopCenter),
-                    )
+                    } // end inner Box (layout + overlays)
+                    } // end outer Column (status bar + inner Box)
 
                     // Suppress unused warning — RoseGeometry is used
                     // by Constellation / Amulet / Bloom imports.
@@ -426,7 +426,6 @@ fun MytharaRoot(
                             onComplete = { showBloom = false },
                         )
                     }
-                    } // end Box wrapping the layout pivot
 
                     if (secretUnlockOpen) {
                         SecretUnlockDialog(

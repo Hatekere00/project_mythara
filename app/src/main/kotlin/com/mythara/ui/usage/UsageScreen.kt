@@ -154,6 +154,15 @@ fun UsageScreen(
                         Text("raw json", color = MytharaColors.Charple)
                     }
                 }
+                // Always-available sync button: opens the WebView
+                // sign-in regardless of current session state.
+                // Useful when the captured JWT expires before its
+                // exp claim (server-side revocation, password
+                // change, etc.) — replays the Google connect flow
+                // and re-captures fresh cookies.
+                TextButton(onClick = onSignIn) {
+                    Text("sync", color = MytharaColors.Malibu)
+                }
                 TextButton(onClick = { vm.refresh() }) {
                     Text("refresh", color = MytharaColors.Bok)
                 }

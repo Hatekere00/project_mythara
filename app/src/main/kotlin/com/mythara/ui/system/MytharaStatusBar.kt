@@ -8,6 +8,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.BatteryManager
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -39,6 +41,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import com.mythara.ui.amulet.RoseGeometry
 import com.mythara.ui.theme.MytharaColors
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
@@ -153,8 +161,7 @@ fun MytharaStatusBar(modifier: Modifier = Modifier) {
             .padding(horizontal = 14.dp, vertical = 4.dp)
             .height(STRIP_HEIGHT_DP.dp),
     ) {
-        // Left cluster: clock + signal-strength dots, kept tight
-        // so the centre stays clear for the camera punch-hole.
+        // Left cluster: clock + signal-strength dots.
         Row(
             modifier = Modifier.align(Alignment.CenterStart),
             verticalAlignment = Alignment.CenterVertically,
@@ -169,9 +176,27 @@ fun MytharaStatusBar(modifier: Modifier = Modifier) {
             SignalDots(litCount = network.bars, accent = SIGNAL_COLOR)
         }
 
-        // Right cluster: API health dots + charging glyph + battery
-        // percent + battery glyph. Also kept tight to avoid
-        // creeping into the pinhole zone.
+        // Centre cluster: small rose mark + "MYTHARA" text. The
+        // strip itself is positioned BELOW the pinhole vertical
+        // line via the 22dp top push above, so this content sits
+        // CLEAR of the camera cutout rather than under it.
+        Row(
+            modifier = Modifier.align(Alignment.Center),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            RoseMarkSmall(sizeDp = 14)
+            Text(
+                text = "MYTHARA",
+                color = RoseGeometry.Lavender,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.5.sp,
+            )
+        }
+
+        // Right cluster: API health dots + battery percent + circular
+        // battery icon. Tight cluster so it stays inside the strip.
         Row(
             modifier = Modifier.align(Alignment.CenterEnd),
             verticalAlignment = Alignment.CenterVertically,
@@ -179,26 +204,117 @@ fun MytharaStatusBar(modifier: Modifier = Modifier) {
         ) {
             HealthDot(label = "M", health = minimaxHealth, accent = MINIMAX_COLOR)
             HealthDot(label = "I", health = imageHealth, accent = IMAGE_COLOR)
-            Spacer(Modifier.width(4.dp))
-            if (battery.charging) {
-                Text(
-                    text = "⚡",
-                    color = MytharaColors.Mustard,
-                    fontSize = 11.sp,
-                )
-            }
+            Spacer(Modifier.width(2.dp))
             Text(
                 text = "${battery.percent}%",
                 color = MytharaColors.FgMute,
                 fontSize = 11.sp,
             )
-            BatteryGlyph(percent = battery.percent, charging = battery.charging)
+            CircularBatteryIcon(percent = battery.percent, charging = battery.charging)
         }
-        // Centre is INTENTIONALLY EMPTY — leaves an open band for
-        // the device's centred camera punch-hole / hole-punch to
-        // sit without overlapping any content. Modern Pixels +
-        // Galaxy phones place the cutout dead-centre at the top
-        // edge; if Mythara renders content there it'd be obscured.
+    }
+}
+
+/**
+ * Tiny rendition of the Mythara rose for the status bar centre.
+ * Renders the same 10-petal geometry [RoseGeometry] uses for the
+ * popup amulet + watch face + wallpaper, just at status-bar scale
+ * (~14dp). No animation — the wallpaper + amulet already carry
+ * the brand's living motion; this is a static badge so the strip
+ * stays visually quiet.
+ */
+@Composable
+private fun RoseMarkSmall(sizeDp: Int) {
+    val petalPath = remember { Path() }
+    val hexPath = remember { Path() }
+    Canvas(modifier = Modifier.size(sizeDp.dp)) {
+        val cx = size.width / 2f
+        val cy = size.height / 2f
+        // Rose source viewport is 108×108, outermost petal tips at
+        // |30| source units. Fit the chosen size into the canvas.
+        val scale = (minOf(size.width, size.height) * 0.5f) /
+            RoseGeometry.OuterRadiusSourceUnits
+        for (deg in RoseGeometry.BigPetalAngles) {
+            RoseGeometry.petalPath(
+                diamond = RoseGeometry.BigPetal,
+                angleDegrees = deg.toFloat(),
+                cx = cx, cy = cy, scale = scale,
+                out = petalPath,
+            )
+            drawPath(petalPath, color = RoseGeometry.Purple)
+        }
+        for (deg in RoseGeometry.SmallPetalAngles) {
+            RoseGeometry.petalPath(
+                diamond = RoseGeometry.SmallPetal,
+                angleDegrees = deg.toFloat(),
+                cx = cx, cy = cy, scale = scale,
+                out = petalPath,
+            )
+            drawPath(petalPath, color = RoseGeometry.Lavender)
+        }
+        RoseGeometry.hexPath(cx, cy, scale, hexPath)
+        drawPath(hexPath, color = RoseGeometry.Cyan)
+    }
+}
+
+/**
+ * Circular battery icon — replaces the rectangular glyph.
+ *   - Background ring: SurfaceHigh, full circle
+ *   - Foreground arc: fills clockwise from 12 o'clock proportional
+ *     to battery percent, coloured by state (green/charging,
+ *     muted/normal, charple/critical)
+ *   - Centre: ⚡ when charging, otherwise empty (the percent
+ *     number lives next to the icon already)
+ */
+@Composable
+private fun CircularBatteryIcon(percent: Int, charging: Boolean) {
+    val accent = when {
+        percent <= 15 -> MytharaColors.Charple
+        charging -> MytharaColors.Bok
+        else -> MytharaColors.FgMute
+    }
+    Box(
+        modifier = Modifier.size(BATTERY_ICON_DP.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.size(BATTERY_ICON_DP.dp)) {
+            val stroke = 1.5.dp.toPx()
+            val padding = stroke / 2f
+            val rect = androidx.compose.ui.geometry.Rect(
+                left = padding,
+                top = padding,
+                right = size.width - padding,
+                bottom = size.height - padding,
+            )
+            // Background ring — full circle, dim.
+            drawArc(
+                color = MytharaColors.SurfaceHigh,
+                startAngle = -90f,
+                sweepAngle = 360f,
+                useCenter = false,
+                topLeft = Offset(rect.left, rect.top),
+                size = Size(rect.width, rect.height),
+                style = Stroke(width = stroke),
+            )
+            // Foreground arc — proportional, accent-coloured.
+            val sweep = (percent.coerceIn(0, 100) / 100f) * 360f
+            drawArc(
+                color = accent,
+                startAngle = -90f,
+                sweepAngle = sweep,
+                useCenter = false,
+                topLeft = Offset(rect.left, rect.top),
+                size = Size(rect.width, rect.height),
+                style = Stroke(width = stroke),
+            )
+        }
+        if (charging) {
+            Text(
+                text = "⚡",
+                color = accent,
+                fontSize = 9.sp,
+            )
+        }
     }
 }
 
@@ -260,38 +376,9 @@ private fun Dot(accent: Color, glow: Boolean, sizeDp: Int) {
     )
 }
 
-@Composable
-private fun BatteryGlyph(percent: Int, charging: Boolean) {
-    val accent = when {
-        percent <= 15 -> MytharaColors.Charple
-        charging -> MytharaColors.Bok
-        else -> MytharaColors.FgMute
-    }
-    Box(
-        modifier = Modifier
-            .size(width = 22.dp, height = 11.dp)
-            .clip(RoundedCornerShape(2.dp))
-            .background(MytharaColors.SurfaceHigh)
-            .padding(1.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(percent / 100f)
-                .height(9.dp)
-                .clip(RoundedCornerShape(1.dp))
-                .background(accent),
-        )
-    }
-    Spacer(Modifier.width(1.dp))
-    Box(
-        modifier = Modifier
-            .size(width = 2.dp, height = 5.dp)
-            .background(MytharaColors.SurfaceHigh),
-    )
-}
-
-internal const val STRIP_HEIGHT_DP = 28
+internal const val STRIP_HEIGHT_DP = 32
 private const val SIGNAL_BAR_COUNT = 4
+private const val BATTERY_ICON_DP = 16
 
 /** Extra top padding beyond WindowInsets.statusBars to clear the
  *  camera hole-punch. windowInsetsPadding returns 0 when the
