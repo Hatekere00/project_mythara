@@ -112,6 +112,34 @@ data class ContactProfileRow(
      * avatar. Preserved across rebuilds like [userNotes].
      */
     @ColumnInfo(name = "photo_uri") val photoUri: String? = null,
+    /**
+     * JSON array of strings — alternate names this person is known
+     * as across apps ("Johnny" in WhatsApp, "John S." in Teams,
+     * "@johnsmith" on Slack). Used by the cross-app person matcher
+     * to dedupe a single human across multiple app channels +
+     * surfaced in the People row as "found in: …" badges.
+     * Empty array when only one name has ever been seen.
+     */
+    @ColumnInfo(name = "aliases_json", defaultValue = "[]")
+    val aliasesJson: String = "[]",
+    /**
+     * JSON array of strings — package names of apps Mythara has
+     * seen this person interact through (Teams, WhatsApp, SMS,
+     * Slack, etc.). Drives the small "found in" badge cluster
+     * under each People row + lets the People list explain WHY
+     * a row exists when it was auto-added from a notification.
+     */
+    @ColumnInfo(name = "source_apps_json", defaultValue = "[]")
+    val sourceAppsJson: String = "[]",
+    /**
+     * True when this profile was auto-created by the cross-app
+     * notification observer (versus appearing because the user
+     * exchanged messages via the agent's auto-reply path). Lets
+     * the UI render auto-added rows below favourites in a distinct
+     * "auto-discovered" section the user can promote / dismiss.
+     */
+    @ColumnInfo(name = "is_auto_added", defaultValue = "0")
+    val isAutoAdded: Boolean = false,
     /** Last time the analytics builder produced / updated this row. */
     @ColumnInfo(name = "last_built_ms") val lastBuiltMs: Long = 0,
 ) {
@@ -155,6 +183,19 @@ interface ContactProfileDao {
     @Query("UPDATE contact_profiles SET photo_uri = :uri WHERE name_key = :key")
     suspend fun updatePhotoUri(key: String, uri: String?)
 
+    /** Replace the cross-app aliases list (JSON array). */
+    @Query("UPDATE contact_profiles SET aliases_json = :json WHERE name_key = :key")
+    suspend fun updateAliases(key: String, json: String)
+
+    /** Replace the source-apps list (JSON array of package names). */
+    @Query("UPDATE contact_profiles SET source_apps_json = :json WHERE name_key = :key")
+    suspend fun updateSourceApps(key: String, json: String)
+
+    /** Promote an auto-added row out of the "auto-discovered"
+     *  section (e.g. user opens it + interacts → no longer flagged). */
+    @Query("UPDATE contact_profiles SET is_auto_added = 0 WHERE name_key = :key")
+    suspend fun clearAutoAdded(key: String)
+
     @Query("DELETE FROM contact_profiles WHERE name_key = :key")
     suspend fun deleteByKey(key: String)
 
@@ -162,7 +203,7 @@ interface ContactProfileDao {
     suspend fun clear()
 }
 
-@Database(entities = [ContactProfileRow::class], version = 5, exportSchema = false)
+@Database(entities = [ContactProfileRow::class], version = 6, exportSchema = false)
 abstract class ContactProfilesDb : RoomDatabase() {
     abstract fun profiles(): ContactProfileDao
 }
@@ -176,11 +217,25 @@ internal val MIGRATION_CONTACTS_4_5 = object : Migration(4, 5) {
     }
 }
 
+/** v5 → v6: cross-app person identity unification. Adds:
+ *    - aliases_json:    JSON array of alternate names (other apps)
+ *    - source_apps_json: JSON array of package names where seen
+ *    - is_auto_added:   true when auto-created by the notification
+ *                       observer (vs added through agent interaction)
+ *  All three carry default values so existing rows survive the bump. */
+internal val MIGRATION_CONTACTS_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE contact_profiles ADD COLUMN aliases_json TEXT NOT NULL DEFAULT '[]'")
+        db.execSQL("ALTER TABLE contact_profiles ADD COLUMN source_apps_json TEXT NOT NULL DEFAULT '[]'")
+        db.execSQL("ALTER TABLE contact_profiles ADD COLUMN is_auto_added INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
 @Singleton
 class ContactProfileRepository @Inject constructor(@ApplicationContext ctx: Context) {
     private val db: ContactProfilesDb =
         Room.databaseBuilder(ctx, ContactProfilesDb::class.java, "mythara_contact_profiles.db")
-            .addMigrations(MIGRATION_CONTACTS_4_5)
+            .addMigrations(MIGRATION_CONTACTS_4_5, MIGRATION_CONTACTS_5_6)
             .fallbackToDestructiveMigration()
             .build()
     val dao: ContactProfileDao = db.profiles()

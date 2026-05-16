@@ -49,6 +49,7 @@ class SemanticRecall @Inject constructor(
     @ApplicationContext private val ctx: Context,
     private val embedder: LocalEmbedder,
     private val vault: LearningVault,
+    private val graph: com.mythara.memory.graph.GraphMemoryRepository,
 ) {
 
     private val Context.ds: DataStore<Preferences>
@@ -151,6 +152,43 @@ class SemanticRecall @Inject constructor(
             sb.append("\n")
         }
         return sb.toString().trimEnd()
+    }
+
+    /**
+     * If the query mentions any entities Mythara has in its
+     * temporal knowledge graph, render their neighbourhood as a
+     * compact "what's around X right now" block. Independent of the
+     * vector-recall block — both can ride along on the same turn.
+     *
+     * Cheap: a single substring scan over the entity table for
+     * names whose lowercased nameKey appears in the query (case-
+     * insensitive), then a [GraphMemoryRepository.neighbours] pull
+     * for each match capped at 3 hits per entity.
+     *
+     * Returns null when nothing matched or the graph is empty —
+     * the AgentLoop just skips the system message in that case.
+     */
+    suspend fun renderGraphContext(query: String, perEntity: Int = 3, maxEntities: Int = 3): String? {
+        if (!isEnabled()) return null
+        if (query.isBlank()) return null
+        val q = query.lowercase()
+        val entities = runCatching { graph.matchByNameInText(q, limit = maxEntities) }.getOrNull()
+            ?: return null
+        if (entities.isEmpty()) return null
+        val sb = StringBuilder()
+        sb.append("Knowledge-graph context — facts already known about people / things mentioned in this query:\n\n")
+        var emitted = 0
+        for (e in entities) {
+            val edges = runCatching { graph.neighbours(e.id, limit = perEntity) }.getOrDefault(emptyList())
+            if (edges.isEmpty()) continue
+            sb.append("• ").append(e.name).append(" (").append(e.kind).append("):\n")
+            for (edge in edges) {
+                val text = edge.factText ?: "${edge.predicate} -> ${edge.objectId.takeLast(8)}"
+                sb.append("    - ").append(text).append('\n')
+            }
+            emitted++
+        }
+        return if (emitted == 0) null else sb.toString().trimEnd()
     }
 
     /**

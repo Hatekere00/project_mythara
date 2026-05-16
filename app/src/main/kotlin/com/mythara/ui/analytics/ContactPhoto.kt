@@ -38,7 +38,10 @@ object ContactPhoto {
 
     suspend fun resolveBitmap(ctx: Context, profile: ContactProfileRow): Bitmap? =
         withContext(Dispatchers.IO) {
-            // 1) App override.
+            // 1) App override — the user-picked photo for THIS
+            //    person, kept under filesDir/contact_photos/.
+            //    Always wins over phone-contact lookup so the
+            //    user's choice never gets clobbered.
             profile.photoUri?.let { path ->
                 runCatching {
                     val f = File(path)
@@ -47,6 +50,30 @@ object ContactPhoto {
                     }
                 }
             }
+            // 1b) If this contact row IS the user (matches an alias
+            //     / phone in MeProfileStore), defer to the Me-set
+            //     avatar instead of falling through to the phone's
+            //     address book — which would silently overwrite
+            //     the user's Mythara self-photo with whatever
+            //     ContactsContract has for "you".
+            runCatching {
+                val store = dagger.hilt.android.EntryPointAccessors.fromApplication(
+                    ctx.applicationContext,
+                    ContactPhotoEntryPoint::class.java,
+                ).meProfileStore()
+                if (store.matchesSelf(profile.displayName, profile.phone)) {
+                    val mePath = store.snapshot().photoPath
+                    if (mePath.isNotBlank()) {
+                        val f = File(mePath)
+                        if (f.exists()) return@withContext decodeScaled(f.readBytes())
+                    }
+                    // No me-photo set — return null so the initial-
+                    // letter fallback renders. Skip the phone-
+                    // contact branch entirely so "Me" identity stays
+                    // controlled by the user, not ContactsContract.
+                    return@withContext null
+                }
+            }.onFailure { Log.d(TAG, "me-self check failed: ${it.message}") }
             // 2) Phone contact photo.
             runCatching {
                 phoneContactPhotoUri(ctx, profile)?.let { uri ->
@@ -57,6 +84,15 @@ object ContactPhoto {
             }.onFailure { Log.d(TAG, "phone photo lookup failed: ${it.message}") }
             null
         }
+
+    /** Hilt accessor for fetching [com.mythara.me.MeProfileStore]
+     *  from inside this object (which isn't in the Hilt graph
+     *  itself). */
+    @dagger.hilt.EntryPoint
+    @dagger.hilt.InstallIn(dagger.hilt.components.SingletonComponent::class)
+    interface ContactPhotoEntryPoint {
+        fun meProfileStore(): com.mythara.me.MeProfileStore
+    }
 
     private fun phoneContactPhotoUri(ctx: Context, profile: ContactProfileRow): Uri? {
         // Prefer phone-number lookup; fall back to a display-name match.

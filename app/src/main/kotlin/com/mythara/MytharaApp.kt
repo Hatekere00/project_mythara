@@ -58,6 +58,7 @@ class MytharaApp : Application(), Configuration.Provider {
     @Inject lateinit var personaSettings: PersonaSettings
     @Inject lateinit var autoReplyDispatcher: AutoReplyDispatcher
     @Inject lateinit var notificationImageIngestor: NotificationImageIngestor
+    @Inject lateinit var crossAppPersonObserver: com.mythara.people.CrossAppPersonObserver
     @Inject lateinit var contactAnalyticsScheduler: ContactAnalyticsScheduler
     @Inject lateinit var pendingReplyQueue: PendingReplyQueue
     @Inject lateinit var pendingReplyKickScheduler: PendingReplyKickScheduler
@@ -130,6 +131,14 @@ class MytharaApp : Application(), Configuration.Provider {
         // a time with a 30s gap, drops forwards/memes/ads, persists
         // genuine personal-moment learnings into the vault.
         notificationImageIngestor.start()
+        // Always-on cross-app person observer — every messaging
+        // notification (Teams, WhatsApp, SMS, Slack, …) auto-adds
+        // the sender to the People list (below favourites) and
+        // merges aliases of the same human across apps. The
+        // observer skips self (matching MeProfileStore aliases)
+        // and brand/system senders. Behaviour-event side-channel
+        // feeds the daily summariser for pattern derivation.
+        crossAppPersonObserver.start()
         // Daily Gemma rebuild of every per-contact profile so the
         // People screen stays current as conversations + imports
         // accumulate. The builder itself self-gates so the actual

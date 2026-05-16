@@ -72,6 +72,7 @@ class AgentRunner @Inject constructor(
     private val musicMode: com.mythara.data.MusicModeStore,
     private val autoContinue: com.mythara.agent.todo.AgentAutoContinueController,
     private val todoIntentExtractor: com.mythara.agent.todo.TodoIntentExtractor,
+    private val graphTurnExtractor: com.mythara.memory.graph.GraphTurnExtractor,
 ) {
     /**
      * Process-wide scope. SupervisorJob so one failing turn doesn't
@@ -411,6 +412,17 @@ class AgentRunner @Inject constructor(
                 val n = todoIntentExtractor.extract(userText = userText, agentReply = cleaned)
                 if (n > 0) Log.d(TAG, "queued $n intent-derived todo items")
             }.onFailure { Log.w(TAG, "intent extraction failed: ${it.message}") }
+        }
+        // Parallel graph extraction — read the same exchange and
+        // emit Graphiti-style entities + edges into the temporal
+        // knowledge graph. Independent of intent extraction; runs
+        // on its own coroutine so a slow LLM pass on one side
+        // doesn't stall the other.
+        scope.launch {
+            runCatching {
+                val n = graphTurnExtractor.extract(userText = userText, agentReply = cleaned)
+                if (n > 0) Log.d(TAG, "wrote $n graph rows from this turn")
+            }.onFailure { Log.w(TAG, "graph extraction failed: ${it.message}") }
         }
     }
 

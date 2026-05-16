@@ -293,19 +293,78 @@ private fun ProfileList(
 ) {
     if (profiles.isEmpty()) {
         Text(
-            text = "${Glyph.CircleOutline} no contacts yet. Mythara learns people as you exchange messages — once auto-reply has fired a few times for someone, they'll show up here.",
+            text = "${Glyph.CircleOutline} no contacts yet. Mythara learns people from every messaging notification (Teams, WhatsApp, SMS, …) — once a person messages you, they'll show up here automatically.",
             color = MytharaColors.FgDim,
             style = MaterialTheme.typography.bodySmall,
         )
         return
     }
 
+    // Three-section layout per user spec:
+    //   1) Favourites
+    //   2) Discovered (the people Mythara has been told about by
+    //      cross-app notifications — `is_auto_added` true and not
+    //      yet promoted)
+    //   3) Everyone else (manually-added / agent-mediated)
+    //
+    // Sections render in this order so the user can quickly
+    // distinguish "people I told the system about" from "people
+    // the system found for me".
+    val favourites = profiles.filter { it.isFavorite }
+    val discovered = profiles.filter { !it.isFavorite && it.isAutoAdded }
+    val everyoneElse = profiles.filter { !it.isFavorite && !it.isAutoAdded }
+
     LazyColumn(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        items(profiles, key = { it.nameKey }) { p ->
-            ProfileRow(p, onTap = { onTap(p) })
+        if (favourites.isNotEmpty()) {
+            item("h-fav") {
+                SectionLabel(text = "${Glyph.DiamondFilled} favourites")
+            }
+            items(favourites, key = { "f-" + it.nameKey }) { p ->
+                ProfileRow(p, onTap = { onTap(p) })
+            }
+        }
+        if (discovered.isNotEmpty()) {
+            item("h-disc") {
+                SectionLabel(
+                    text = "${Glyph.CircleOutline} discovered across apps",
+                    sub = "auto-added from notifications · tap to confirm or dismiss",
+                )
+            }
+            items(discovered, key = { "d-" + it.nameKey }) { p ->
+                ProfileRow(p, onTap = { onTap(p) })
+            }
+        }
+        if (everyoneElse.isNotEmpty()) {
+            if (favourites.isNotEmpty() || discovered.isNotEmpty()) {
+                item("h-rest") {
+                    SectionLabel(text = "${Glyph.AccentBar} everyone else")
+                }
+            }
+            items(everyoneElse, key = { "e-" + it.nameKey }) { p ->
+                ProfileRow(p, onTap = { onTap(p) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionLabel(text: String, sub: String? = null) {
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp)) {
+        Text(
+            text = text,
+            color = MytharaColors.Charple,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+        )
+        if (sub != null) {
+            Text(
+                text = sub,
+                color = MytharaColors.FgDim,
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
 }
@@ -360,6 +419,34 @@ private fun ProfileRow(p: ContactProfileRow, onTap: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
             )
         }
+        // Cross-app "found in" badge cluster — sourced from
+        // [ContactProfileRow.sourceAppsJson] which the
+        // CrossAppPersonObserver keeps fresh on every notification.
+        // Useful "this is the same human across these apps" cue
+        // for the user. Skip when only one app has been seen
+        // (uninteresting + uses screen real estate).
+        val sourceApps = parseStringList(p.sourceAppsJson)
+        if (sourceApps.size > 1) {
+            Spacer(Modifier.height(4.dp))
+            val labels = sourceApps.take(4).joinToString(" · ") { prettyAppName(it) }
+            Text(
+                text = "${Glyph.AccentBar} found in: $labels",
+                color = MytharaColors.Charple,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        // Aliases hint — when the same person appears under multiple
+        // names across apps, surface that on the row so the user can
+        // see the unification at a glance.
+        val aliases = parseStringList(p.aliasesJson).filter { !it.equals(p.displayName, ignoreCase = true) }
+        if (aliases.isNotEmpty()) {
+            Text(
+                text = "  also: ${aliases.take(3).joinToString(", ")}",
+                color = MytharaColors.FgDim,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+
         // Prefer a single key-point teaser over topics on the row —
         // the user landed on this list to remember WHAT'S HAPPENING
         // before messaging, not browse interests. Falls back to topics
@@ -710,3 +797,35 @@ private val JSON = Json { ignoreUnknownKeys = true; isLenient = true }
 
 private fun parseStringList(s: String): List<String> =
     runCatching { JSON.decodeFromString(ListSerializer(String.serializer()), s) }.getOrDefault(emptyList())
+
+/**
+ * Best-effort short label for a notification's source package
+ * name. Used by the "found in: …" badge under a People row.
+ *
+ * Hand-mapped for the most common messaging packages (so we
+ * don't need a PackageManager lookup on every paint, and so the
+ * label reads as the brand the user knows — "WhatsApp" not
+ * "com.whatsapp"). Unknown packages fall back to the last
+ * segment of the package name with a capital first letter.
+ */
+private fun prettyAppName(pkg: String): String = when (pkg) {
+    "com.whatsapp", "com.whatsapp.w4b" -> "WhatsApp"
+    "com.google.android.apps.messaging" -> "Messages"
+    "com.android.mms", "com.samsung.android.messaging" -> "SMS"
+    "com.microsoft.teams" -> "Teams"
+    "com.Slack", "com.slack" -> "Slack"
+    "org.telegram.messenger", "org.telegram.messenger.web" -> "Telegram"
+    "org.thoughtcrime.securesms" -> "Signal"
+    "com.facebook.orca", "com.facebook.mlite" -> "Messenger"
+    "com.discord" -> "Discord"
+    "com.skype.raider" -> "Skype"
+    "jp.naver.line.android" -> "LINE"
+    "com.viber.voip" -> "Viber"
+    "com.kakao.talk" -> "KakaoTalk"
+    "com.tencent.mm" -> "WeChat"
+    "com.google.android.gm" -> "Gmail"
+    "ch.protonmail.android" -> "ProtonMail"
+    "com.microsoft.office.outlook" -> "Outlook"
+    "com.instagram.android" -> "Instagram"
+    else -> pkg.substringAfterLast('.').replaceFirstChar { it.uppercase() }
+}

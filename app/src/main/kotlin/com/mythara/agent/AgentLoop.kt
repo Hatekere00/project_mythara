@@ -119,6 +119,19 @@ class AgentLoop @Inject constructor(
             android.util.Log.d(TAG, "injecting ${recalledFacts.size} recalled facts")
             ChatMessage(role = "system", content = rendered)
         }
+        // Knowledge-graph context — when the user's text mentions
+        // entities Mythara already knows about, render their
+        // currently-valid neighbours into a separate system block.
+        // Independent of vector recall: vector hits surface
+        // free-text facts; graph hits surface STRUCTURED relations
+        // ("Anurag works_at Anthropic", "Sam married_to Tara"). Both
+        // can ride along on the same turn.
+        val graphSystem: ChatMessage? = runCatching {
+            recall.renderGraphContext(userText)?.let { rendered ->
+                android.util.Log.d(TAG, "injecting graph neighbour context")
+                ChatMessage(role = "system", content = rendered)
+            }
+        }.getOrNull()
 
         // Contact-mention injection. If the user's typed/spoken text
         // names someone Mythara has a profile for ("did Mom mention
@@ -515,6 +528,7 @@ class AgentLoop @Inject constructor(
                 if (notifSystem != null) add(notifSystem)
                 if (contactProfileSystem != null) add(contactProfileSystem)
                 if (recallSystem != null) add(recallSystem)
+                if (graphSystem != null) add(graphSystem)
                 addAll(historyMessages)
             }
 

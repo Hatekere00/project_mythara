@@ -7,9 +7,12 @@ import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.graphics.BitmapFactory
 import android.os.BatteryManager
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -46,11 +49,19 @@ import androidx.compose.material3.Text
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.layout.ContentScale
+import com.mythara.me.MeProfileStore
 import com.mythara.ui.amulet.RoseGeometry
 import com.mythara.ui.theme.MytharaColors
+import dagger.hilt.android.EntryPointAccessors
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -82,7 +93,10 @@ import java.util.Locale
  * pipe to fly through?".
  */
 @Composable
-fun MytharaStatusBar(modifier: Modifier = Modifier) {
+fun MytharaStatusBar(
+    modifier: Modifier = Modifier,
+    onOpenAboutMe: () -> Unit = {},
+) {
     val ctx = LocalContext.current
 
     val nowFmt by produceState(initialValue = formatNow(), key1 = Unit) {
@@ -147,16 +161,31 @@ fun MytharaStatusBar(modifier: Modifier = Modifier) {
         }
     }
 
-    // Pixel-tuned safe-area padding. The system reports BOTH the
-    // statusBars inset (height of the system status bar zone, 0 in
-    // launcher mode where we hide it) AND the displayCutout inset
-    // (height of the camera hole-punch area). On Pixel 10 Pro the
-    // pinhole centre sits ~36-40dp from the top edge — we take the
-    // MAX of (displayCutout.top, statusBars.top, PIXEL_FLOOR) so
-    // any non-cutout-reporting Pixel class still gets enough room.
+    // Resolve the actual cutout RECT (not just the inset) so the
+    // Dynamic Island can wrap dock-bar style around the pinhole.
+    // Returns null on devices without a cutout (foldable inner
+    // display, tablets, emulators) — the island then renders as
+    // a single centred pill.
+    val cutout = rememberCutoutRect()
+
+    // Top padding strategy: when we have a real cutout rect, use
+    // the cutout's BOTTOM as the floor (so the strip sits flush
+    // beneath the actual hole, not artificially pushed down). When
+    // we don't, fall back to the system insets + a small Pixel-
+    // floor minimum.
+    //
+    // The previous version forced PIXEL_PINHOLE_FLOOR_DP=40 even
+    // when the OS already reported a smaller real inset — that
+    // pushed the strip down too far on Pixel 10 Pro. We now only
+    // use the floor as a SAFETY net, not a default.
     val cutoutTopDp = WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
     val statusTopDp = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    val safeTopDp = maxOf(cutoutTopDp.value, statusTopDp.value, PIXEL_PINHOLE_FLOOR_DP.toFloat())
+    val safeTopDp = when {
+        cutout != null -> cutout.bottomDp + 2f  // sit flush beneath the actual hole
+        cutoutTopDp.value > 0f -> cutoutTopDp.value
+        statusTopDp.value > 0f -> statusTopDp.value
+        else -> PIXEL_PINHOLE_FLOOR_DP.toFloat()
+    }
 
     Box(
         modifier = modifier
@@ -187,24 +216,27 @@ fun MytharaStatusBar(modifier: Modifier = Modifier) {
             SignalDots(litCount = network.bars, accent = SIGNAL_COLOR)
         }
 
-        // Centre: iPhone Dynamic Island-style pill that idles as
-        // the rose + MYTHARA wordmark and morphs to surface
-        // momentary insights pushed into [DynamicIslandSink]
-        // (agent thinking, fresh insight from phone, next
-        // reminder countdown, HR alert, etc.). Tap → triggers a
-        // brief animation (rose spins + pill pulses) and clears
-        // the active insight.
+        // Centre: iPhone Dynamic Island-style pill — wraps around
+        // the camera cutout dock-bar style when one is present.
+        // Idles as the rose + MYTHARA wordmark and morphs to
+        // surface momentary insights pushed into [DynamicIslandSink]
+        // (agent thinking, fresh insight from phone, next reminder
+        // countdown, HR alert). Tap → brief animation + clears
+        // the active insight. Bouncing-dock entrance plays on
+        // mount and on every fold-posture flip.
         DynamicIsland(
             modifier = Modifier.align(Alignment.Center),
+            cutout = cutout,
         )
 
-        // Right cluster: API health dots + battery percent + circular
-        // battery icon. Tight cluster so it stays inside the strip.
+        // Right cluster: Me avatar (taps → AboutMe) + API health
+        // dots + battery percent + circular battery icon.
         Row(
             modifier = Modifier.align(Alignment.CenterEnd),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            MeAvatar(onClick = onOpenAboutMe)
             HealthDot(label = "M", health = minimaxHealth, accent = MINIMAX_COLOR)
             HealthDot(label = "I", health = imageHealth, accent = IMAGE_COLOR)
             Spacer(Modifier.width(2.dp))
@@ -216,6 +248,84 @@ fun MytharaStatusBar(modifier: Modifier = Modifier) {
             CircularBatteryIcon(percent = battery.percent, charging = battery.charging)
         }
     }
+}
+
+/**
+ * Tiny circular avatar of the user, sourced from
+ * [MeProfileStore.Profile.photoPath]. Tapping it navigates to
+ * AboutMe (where the user can change the photo, set a display name,
+ * link cross-app aliases). When no photo is set, falls back to the
+ * initial letter of the user's display name in lavender on a dim
+ * circle — same approach as the people-list initial-letter avatar.
+ *
+ * The bitmap is decoded once and cached against the file's
+ * `updatedAtMs` so a photo change repaints, but recompositions
+ * during scrolling don't re-decode.
+ */
+@Composable
+private fun MeAvatar(onClick: () -> Unit) {
+    val ctx = LocalContext.current
+    // Pull the MeProfileStore via Hilt's EntryPointAccessors —
+    // status bar is a plain composable, not a HiltViewModel, so we
+    // grab the singleton directly.
+    val store = remember {
+        EntryPointAccessors.fromApplication(
+            ctx.applicationContext,
+            MytharaStatusBarEntryPoint::class.java,
+        ).meProfileStore()
+    }
+    val profile by produceState(initialValue = MeProfileStore.Profile(), key1 = store) {
+        store.observe().collect { value = it }
+    }
+    val bmp by produceState(
+        initialValue = null as androidx.compose.ui.graphics.ImageBitmap?,
+        key1 = profile.photoPath, key2 = profile.updatedAtMs,
+    ) {
+        value = withContext(Dispatchers.IO) {
+            val path = profile.photoPath
+            if (path.isBlank()) return@withContext null
+            runCatching {
+                BitmapFactory.decodeFile(File(path).absolutePath)?.asImageBitmap()
+            }.getOrNull()
+        }
+    }
+    Box(
+        modifier = Modifier
+            .size(ME_AVATAR_DP.dp)
+            .clip(CircleShape)
+            .background(MytharaColors.SurfaceHigh)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        val image = bmp
+        if (image != null) {
+            Image(
+                bitmap = image,
+                contentDescription = "open About Me",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.size(ME_AVATAR_DP.dp).clip(CircleShape),
+            )
+        } else {
+            val initial = profile.displayName.firstOrNull()?.uppercaseChar()?.toString() ?: "Me"
+            Text(
+                text = initial,
+                color = RoseGeometry.Lavender,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+    }
+}
+
+/**
+ * Hilt entry point for plain composables (no ViewModel) — lets us
+ * pull the [MeProfileStore] singleton without breaking out of the
+ * Hilt graph.
+ */
+@dagger.hilt.EntryPoint
+@dagger.hilt.InstallIn(dagger.hilt.components.SingletonComponent::class)
+interface MytharaStatusBarEntryPoint {
+    fun meProfileStore(): MeProfileStore
 }
 
 /**
@@ -382,13 +492,14 @@ private fun Dot(accent: Color, glow: Boolean, sizeDp: Int) {
 internal const val STRIP_HEIGHT_DP = 32
 private const val SIGNAL_BAR_COUNT = 4
 private const val BATTERY_ICON_DP = 16
+private const val ME_AVATAR_DP = 18
 
-/** Minimum top padding for Pixel-class devices when the system
- *  doesn't report a useful inset (launcher mode hides statusBars
- *  to 0; some devices under-report displayCutout). 40dp clears
- *  the centred pinhole on Pixel 10 Pro / 9 Pro / 9 Pro Fold
- *  comfortably with a few dp of breathing room. */
-private const val PIXEL_PINHOLE_FLOOR_DP = 40
+/** Last-resort top padding when neither displayCutout nor
+ *  statusBars insets report anything (launcher mode + non-cutout
+ *  device). Lowered from 40dp → 24dp so non-cutout devices don't
+ *  get pushed down unnecessarily; on Pixel-class devices the real
+ *  cutout rect drives the top now (see [rememberCutoutRect]). */
+private const val PIXEL_PINHOLE_FLOOR_DP = 24
 
 // Palette for the new status indicators. Purple for signal so it
 // reads as a Mythara accent (matches the rose petal palette).

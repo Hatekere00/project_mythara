@@ -192,7 +192,7 @@ fun MytharaRoot(
                     androidx.compose.foundation.layout.Column(
                         modifier = Modifier.fillMaxSize(),
                     ) {
-                    MytharaStatusBar()
+                    MytharaStatusBar(onOpenAboutMe = { nav.navigate(Routes.AboutMe) })
                     Box(
                         modifier = Modifier
                             .fillMaxSize()

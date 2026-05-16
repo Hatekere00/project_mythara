@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,10 +30,16 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.health.connect.client.HealthConnectClient
@@ -48,6 +55,7 @@ import com.mythara.analytics.ContactClassifier
 import com.mythara.analytics.ContactProfileRepository
 import com.mythara.analytics.ContactProfileRow
 import com.mythara.health.HealthAccess
+import com.mythara.me.MeProfileStore
 import com.mythara.memory.Tier
 import com.mythara.persona.SelfPersonaBuilder
 import com.mythara.persona.UsageAccessHelper
@@ -61,8 +69,10 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -105,7 +115,25 @@ class AboutMeViewModel @Inject constructor(
     private val usageCollector: UsageStatsCollector,
     private val usageAccess: UsageAccessHelper,
     private val selfPersonaBuilder: SelfPersonaBuilder,
+    private val meProfile: MeProfileStore,
 ) : ViewModel() {
+
+    /**
+     * Live "Me" profile — display name, self-photo path, cross-app
+     * aliases, phone numbers — distinct from the per-contact rows
+     * in [ContactProfileRepository]. The status-bar Me avatar reads
+     * from the same flow so a change here repaints there.
+     */
+    val meProfileFlow: StateFlow<MeProfileStore.Profile> = meProfile.observe()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, MeProfileStore.Profile())
+
+    fun setMeName(name: String) = viewModelScope.launch { meProfile.setDisplayName(name) }
+    fun setMePhoto(uri: android.net.Uri) = viewModelScope.launch { meProfile.setPhoto(uri) }
+    fun clearMePhoto() = viewModelScope.launch { meProfile.clearPhoto() }
+    fun addMeAlias(alias: String) = viewModelScope.launch { meProfile.addAlias(alias) }
+    fun removeMeAlias(alias: String) = viewModelScope.launch { meProfile.removeAlias(alias) }
+    fun addMePhone(phone: String) = viewModelScope.launch { meProfile.addPhone(phone) }
+    fun removeMePhone(phone: String) = viewModelScope.launch { meProfile.removePhone(phone) }
 
     data class HrSummary(
         val count: Int,
@@ -559,6 +587,24 @@ fun AboutMeScreen(
 
         Spacer(Modifier.height(20.dp))
 
+        // 0) "Me" identity panel — name, self-photo (won't be
+        //    overridden by phone contact lookup), cross-app
+        //    aliases. The status-bar Me avatar reads from the
+        //    same store, so changes here repaint there too.
+        val meProfile by vm.meProfileFlow.collectAsState()
+        MeIdentityPanel(
+            profile = meProfile,
+            onSetName = vm::setMeName,
+            onSetPhoto = vm::setMePhoto,
+            onClearPhoto = { vm.clearMePhoto() },
+            onAddAlias = vm::addMeAlias,
+            onRemoveAlias = vm::removeMeAlias,
+            onAddPhone = vm::addMePhone,
+            onRemovePhone = vm::removeMePhone,
+        )
+
+        Spacer(Modifier.height(12.dp))
+
         if (ui.loading) {
             Panel("loading") {
                 Text("reading the vault…", color = MytharaColors.FgMute, style = MaterialTheme.typography.bodySmall)
@@ -922,5 +968,210 @@ private fun shortRelative(ms: Long?): String {
         h < 24 -> "${h}h ago"
         d < 7 -> "${d}d ago"
         else -> SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(ms))
+    }
+}
+
+/**
+ * "Me" identity panel — name + photo + cross-app aliases.
+ *
+ * Why this lives here (not in PeopleScreen):
+ *   - About Me is the canonical "this is YOU" surface; every other
+ *     person lives in People. Keeping the self-profile here mirrors
+ *     that mental model.
+ *   - The status-bar Me avatar reads from the same MeProfileStore
+ *     and tapping it lands on this panel — so the user has a single
+ *     edit surface they can reach from any screen.
+ *
+ * The panel exposes:
+ *   - Avatar (tap to pick a new photo from the system picker; long
+ *     tap not implemented — clear button beneath instead)
+ *   - Display name (single-line text field)
+ *   - Aliases (each row = name + remove × ; bottom row = add input)
+ *   - Phones (same shape as aliases, treated as last-7-digits-suffix
+ *     for matching)
+ *
+ * The cross-app person observer reads this profile to skip self-
+ * notifications (so you don't end up as a People row), and the
+ * contact-photo resolver reads it to ensure your set photo isn't
+ * overwritten by ContactsContract.
+ */
+@Composable
+private fun MeIdentityPanel(
+    profile: com.mythara.me.MeProfileStore.Profile,
+    onSetName: (String) -> Unit,
+    onSetPhoto: (android.net.Uri) -> Unit,
+    onClearPhoto: () -> Unit,
+    onAddAlias: (String) -> Unit,
+    onRemoveAlias: (String) -> Unit,
+    onAddPhone: (String) -> Unit,
+    onRemovePhone: (String) -> Unit,
+) {
+    val photoPicker = rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia(),
+    ) { uri -> if (uri != null) onSetPhoto(uri) }
+    val ctx = LocalContext.current
+
+    var nameDraft by remember(profile.displayName) { mutableStateOf(profile.displayName) }
+    var aliasDraft by remember { mutableStateOf("") }
+    var phoneDraft by remember { mutableStateOf("") }
+
+    Panel(title = "${Glyph.DiamondFilled} you") {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // Self-avatar — tap to pick.
+            Box(
+                modifier = Modifier
+                    .size(64.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(MytharaColors.SurfaceHigh)
+                    .border(
+                        2.dp,
+                        MytharaColors.Charple,
+                        androidx.compose.foundation.shape.CircleShape,
+                    )
+                    .clickable {
+                        photoPicker.launch(
+                            androidx.activity.result.PickVisualMediaRequest(
+                                androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly,
+                            ),
+                        )
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                val path = profile.photoPath
+                val bmp = remember(path, profile.updatedAtMs) {
+                    if (path.isBlank()) null
+                    else runCatching {
+                        android.graphics.BitmapFactory.decodeFile(path)
+                    }.getOrNull()
+                }
+                if (bmp != null) {
+                    androidx.compose.foundation.Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = "your avatar",
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier
+                            .size(64.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape),
+                    )
+                } else {
+                    Text(
+                        text = profile.displayName.firstOrNull()?.uppercaseChar()?.toString() ?: "Me",
+                        color = MytharaColors.Charple,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                androidx.compose.material3.OutlinedTextField(
+                    value = nameDraft,
+                    onValueChange = { nameDraft = it },
+                    label = { Text("your name", style = MaterialTheme.typography.labelSmall) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(6.dp))
+                Row {
+                    TextButton(onClick = { onSetName(nameDraft) }) {
+                        Text("${Glyph.Check} save name", style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (profile.photoPath.isNotBlank()) {
+                        Spacer(Modifier.width(6.dp))
+                        TextButton(onClick = onClearPhoto) {
+                            Text(
+                                "${Glyph.Cross} clear photo",
+                                color = MytharaColors.Sriracha,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = "${Glyph.AccentBar} other names you go by — Mythara will treat notifications from these as YOU and not auto-add them as People rows.",
+            color = MytharaColors.FgDim,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Spacer(Modifier.height(6.dp))
+        for (alias in profile.aliases) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "  $alias",
+                    color = MytharaColors.Fg,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = { onRemoveAlias(alias) }) {
+                    Text("${Glyph.Cross}", color = MytharaColors.Sriracha)
+                }
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.material3.OutlinedTextField(
+                value = aliasDraft,
+                onValueChange = { aliasDraft = it },
+                placeholder = { Text("e.g. \"Anurag K.\" (Teams display name)") },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(6.dp))
+            TextButton(onClick = {
+                if (aliasDraft.isNotBlank()) {
+                    onAddAlias(aliasDraft.trim())
+                    aliasDraft = ""
+                }
+            }) {
+                Text("${Glyph.Check} add", color = MytharaColors.Bok)
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = "${Glyph.AccentBar} phone numbers used by you (any format works — only the last 7 digits are matched).",
+            color = MytharaColors.FgDim,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Spacer(Modifier.height(6.dp))
+        for (phone in profile.phones) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "  $phone",
+                    color = MytharaColors.Fg,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = { onRemovePhone(phone) }) {
+                    Text("${Glyph.Cross}", color = MytharaColors.Sriracha)
+                }
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.material3.OutlinedTextField(
+                value = phoneDraft,
+                onValueChange = { phoneDraft = it },
+                placeholder = { Text("+1 555 123 4567") },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(6.dp))
+            TextButton(onClick = {
+                if (phoneDraft.isNotBlank()) {
+                    onAddPhone(phoneDraft.trim())
+                    phoneDraft = ""
+                }
+            }) {
+                Text("${Glyph.Check} add", color = MytharaColors.Bok)
+            }
+        }
     }
 }

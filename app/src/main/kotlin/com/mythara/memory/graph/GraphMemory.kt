@@ -158,6 +158,13 @@ interface GraphMemoryDao {
     @Query("SELECT * FROM graph_entities WHERE synced = 0 ORDER BY createdAtMs ASC LIMIT :limit")
     suspend fun unsyncedEntities(limit: Int = 200): List<GraphEntity>
 
+    /** All entities, most-recently-created first. Used by the
+     *  recall path to scan for free-text mentions in a chat query
+     *  (substring match against [GraphEntity.nameKey]). Capped at
+     *  the supplied limit to bound the in-memory scan cost. */
+    @Query("SELECT * FROM graph_entities ORDER BY createdAtMs DESC LIMIT :limit")
+    suspend fun listRecentEntities(limit: Int = 2000): List<GraphEntity>
+
     @Query("UPDATE graph_entities SET synced = 1 WHERE id = :id")
     suspend fun markEntitySynced(id: String)
 

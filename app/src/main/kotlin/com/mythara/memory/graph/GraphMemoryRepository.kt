@@ -152,6 +152,31 @@ class GraphMemoryRepository @Inject constructor(
         return (outgoing + incoming).distinctBy { it.id }.take(limit)
     }
 
+    /**
+     * Cheap free-text → entity matcher used by SemanticRecall to
+     * splice graph context onto a chat turn. Pulls every entity
+     * (capped) and returns those whose nameKey appears as a
+     * whole-word substring of [text] (lowercased on both sides).
+     *
+     * Whole-word match avoids false hits ("Sam" matching "samurai").
+     * For best precision we prefer LONGER nameKeys when several
+     * match — "John Smith" wins over "John" when both fit.
+     *
+     * O(N × |text|) where N is the entity count. Fine while N < a
+     * few thousand. Past that, we'd switch to a per-token reverse
+     * index — not warranted yet.
+     */
+    suspend fun matchByNameInText(text: String, limit: Int = 3): List<GraphEntity> {
+        if (text.isBlank()) return emptyList()
+        val lower = " " + text.lowercase().replace(Regex("[^a-z0-9]+"), " ").trim() + " "
+        val all = dao.listRecentEntities(limit = 2000)
+        if (all.isEmpty()) return emptyList()
+        return all.filter { e ->
+            val needle = " " + e.nameKey + " "
+            e.nameKey.length >= 2 && lower.contains(needle)
+        }.sortedByDescending { it.nameKey.length }.take(limit)
+    }
+
     /** Resolve a free-text mention to an entity id, or null when
      *  no entity with a matching nameKey exists. Caller can then
      *  decide whether to upsert a new entity. */
