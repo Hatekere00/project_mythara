@@ -44,6 +44,20 @@
         <Group x="0" y="0" width="450" height="450" name="interactive">
             <Variant mode="AMBIENT" target="alpha" value="0" />
 
+            <!-- Mythara warrior silhouette — subtle purple-tinted
+                 figure rendered behind everything else as the very
+                 first element of the interactive Group so all other
+                 layers sit on top of it. Alpha 60/255 so the
+                 presence reads as "there's a guardian behind the
+                 brand mark" without ever competing for attention.
+                 Hidden in ambient (AOD strips down to bare time +
+                 tiny rose outline; no mood backdrop). The PNG is
+                 pre-tinted purple and pre-sized 450×450 with the
+                 warrior centred vertically (201 px wide × 450 tall). -->
+            <PartImage x="0" y="0" width="450" height="450" alpha="90">
+                <Image resource="warrior_silhouette" />
+            </PartImage>
+
             <!-- Brand mark: 180×180 rose centred horizontally in the
                  upper third of the face. Tapping it launches the
                  Mythara wear app (PTT-first home) — same gesture
