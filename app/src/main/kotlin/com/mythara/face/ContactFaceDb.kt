@@ -65,11 +65,21 @@ interface ContactFaceDao {
     @Query("SELECT * FROM contact_face_embeddings WHERE name_key = :nameKey")
     suspend fun listForContact(nameKey: String): List<ContactFaceEmbedding>
 
+    /** Live observation of every embedding row for one contact —
+     *  used by the People detail's "sample photos for face
+     *  recognition" panel so the thumbnail grid updates the moment
+     *  the user adds or removes a sample. */
+    @Query("SELECT * FROM contact_face_embeddings WHERE name_key = :nameKey ORDER BY computed_at_ms DESC")
+    fun observeForContact(nameKey: String): kotlinx.coroutines.flow.Flow<List<ContactFaceEmbedding>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(row: ContactFaceEmbedding): Long
 
     @Query("DELETE FROM contact_face_embeddings WHERE name_key = :nameKey")
     suspend fun deleteForContact(nameKey: String): Int
+
+    @Query("DELETE FROM contact_face_embeddings WHERE source_photo_path = :path")
+    suspend fun deleteByPath(path: String): Int
 
     @Query("DELETE FROM contact_face_embeddings")
     suspend fun clear()

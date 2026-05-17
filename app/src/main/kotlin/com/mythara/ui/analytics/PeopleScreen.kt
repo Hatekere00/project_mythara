@@ -92,6 +92,11 @@ class PeopleViewModel @Inject constructor(
      *  the new "Untagged faces" section at the top of People. */
     private val unknownFaces: com.mythara.face.UnknownFaceRepository,
     private val graphChangeNotifier: com.mythara.analytics.GraphChangeNotifier,
+    /** Sample-photo ingest pipeline + retroactive rescan trigger
+     *  for the per-contact "face recognition basis" panel. */
+    private val faceSampler: com.mythara.face.ContactFaceSampler,
+    private val contactFaceIndex: com.mythara.face.ContactFaceIndex,
+    private val lifelineRepo: com.mythara.lifeline.LifelineRepository,
 ) : ViewModel() {
     val profiles: StateFlow<List<ContactProfileRow>> =
         repo.dao.observeAll().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -362,6 +367,96 @@ class PeopleViewModel @Inject constructor(
             .replace(Regex("[^a-z0-9 ]"), "")
             .replace(Regex("\\s+"), " ")
             .trim()
+
+    // ─── Per-contact face-recognition samples ─────────────────────
+
+    /** Status of the most recent face-sample add for the selected
+     *  contact. Cleared when the user opens a different profile. */
+    data class SampleStatus(
+        val nameKey: String,
+        val message: String,
+        val isError: Boolean = false,
+        val inFlight: Boolean = false,
+    )
+    private val _sampleStatus = MutableStateFlow<SampleStatus?>(null)
+    val sampleStatus: StateFlow<SampleStatus?> = _sampleStatus.asStateFlow()
+
+    /** Live list of every face-embedding row stored for [nameKey] —
+     *  rendered as a thumbnail grid in the contact-detail "face
+     *  recognition basis" panel. Updates the instant the user adds
+     *  or removes a sample. */
+    fun observeFaceSamplesFor(nameKey: String):
+        kotlinx.coroutines.flow.Flow<List<com.mythara.face.ContactFaceEmbedding>> =
+        contactFaceIndex.dao.observeForContact(nameKey)
+
+    /** Live list of every lifeline photo where the face matcher
+     *  detected [nameKey]. Backs the "photos of <name>" grid below
+     *  the sample panel — so once Mythara recognises this contact in
+     *  a photo it shows up in their card automatically. */
+    fun observePhotosOf(nameKey: String):
+        kotlinx.coroutines.flow.Flow<List<com.mythara.lifeline.LifelineEntity>> =
+        lifelineRepo.dao.observeForContact(nameKey, limit = 60)
+
+    /** Process a batch of user-picked sample photos for [nameKey].
+     *  Each gets face-detected, the largest face is cropped and
+     *  embedded, embeddings land in the face index. Afterwards
+     *  retroactively rescans recent lifeline photos that don't yet
+     *  have this contact tagged — so adding "Sam's face" instantly
+     *  back-fills the contact's photos grid with existing shots. */
+    fun addFaceSamples(nameKey: String, uris: List<android.net.Uri>) {
+        if (uris.isEmpty()) return
+        _sampleStatus.value = SampleStatus(
+            nameKey = nameKey,
+            message = "${Glyph.Ellipsis} processing ${uris.size} photo${if (uris.size == 1) "" else "s"}…",
+            inFlight = true,
+        )
+        viewModelScope.launch {
+            val result = runCatching { faceSampler.addSamples(nameKey, uris) }
+                .getOrElse {
+                    _sampleStatus.value = SampleStatus(
+                        nameKey, "${Glyph.Cross} error: ${it.message}", isError = true,
+                    )
+                    return@launch
+                }
+            if (!result.embedderReady) {
+                _sampleStatus.value = SampleStatus(
+                    nameKey,
+                    "${Glyph.Cross} face model not installed yet — try again after it downloads.",
+                    isError = true,
+                )
+                return@launch
+            }
+            val rescanCount = if (result.embeddingsAdded > 0) {
+                runCatching { faceSampler.retroactiveRescan(nameKey) }.getOrDefault(0)
+            } else 0
+            val msg = buildString {
+                append("${Glyph.Check} added ${result.embeddingsAdded} face sample")
+                if (result.embeddingsAdded != 1) append("s")
+                append(" from ${result.urisProcessed} photo${if (result.urisProcessed == 1) "" else "s"}")
+                if (result.facesFound == 0 && result.urisProcessed > 0) {
+                    append(" · no faces detected in any photo")
+                }
+                if (rescanCount > 0) {
+                    append(" · rescanning $rescanCount existing photo${if (rescanCount == 1) "" else "s"}")
+                }
+            }
+            _sampleStatus.value = SampleStatus(
+                nameKey,
+                msg,
+                isError = result.embeddingsAdded == 0 && result.facesFound > 0,
+            )
+        }
+    }
+
+    fun removeFaceSample(sourcePath: String) {
+        viewModelScope.launch {
+            runCatching { faceSampler.removeSample(sourcePath) }
+        }
+    }
+
+    fun clearSampleStatus() {
+        _sampleStatus.value = null
+    }
 }
 
 /**
@@ -447,6 +542,7 @@ fun PeopleScreen(
                 livePersona = livePersona.takeIf { it?.nameKey == selected.nameKey },
                 onSetPhoto = { uri -> vm.setContactPhoto(selected.nameKey, uri) },
                 onClearPhoto = { vm.clearContactPhoto(selected.nameKey) },
+                vm = vm,
             )
         } else {
             ProfileList(
@@ -847,6 +943,7 @@ private fun ProfileDetail(
     livePersona: PeopleViewModel.ContactLivePersona?,
     onSetPhoto: (Uri) -> Unit,
     onClearPhoto: () -> Unit,
+    vm: PeopleViewModel,
 ) {
     val photoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia(),
@@ -1047,6 +1144,19 @@ private fun ProfileDetail(
                 )
             }
         }
+
+        // Face-recognition basis — user-curated sample photos that
+        // teach the matcher this person's face. Adding samples also
+        // kicks a retroactive rescan so existing lifeline photos
+        // back-fill into the photos grid below.
+        Spacer(Modifier.height(12.dp))
+        FaceSamplesPanel(profile = p, vm = vm)
+
+        // Auto-detected photos of this contact — every lifeline
+        // entry whose detected_contacts_json contains this nameKey.
+        // Updates live as FaceAnalysisWorker tags new photos.
+        Spacer(Modifier.height(12.dp))
+        PhotosOfContactPanel(profile = p, vm = vm)
 
         // Capability Expansion v3 phase 7 — recent interactions panel.
         // Aggregated from ContactInteractionDb which dual-writes from

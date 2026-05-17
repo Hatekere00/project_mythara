@@ -266,6 +266,43 @@ interface LifelineDao {
         limit: Int = 200,
     ): List<LifelineEntity>
 
+    /** Every photo whose [detected_contacts_json] mentions [nameKey].
+     *  Backs the "photos of <name>" grid in the People contact-detail
+     *  view — so once the face matcher tags this person in a photo
+     *  they show up in their card automatically.
+     *
+     *  Match shape: detected_contacts_json is `["sarah","mom"]` so a
+     *  GLOB pattern `*"sarah"*` reliably catches the quoted nameKey
+     *  without false positives on substrings (e.g. `samuel` won't
+     *  match `sam`). */
+    @Query(
+        """
+        SELECT * FROM lifeline_entries
+        WHERE is_deleted = 0
+          AND detected_contacts_json GLOB '*"' || :nameKey || '"*'
+        ORDER BY taken_ms DESC
+        LIMIT :limit
+        """,
+    )
+    fun observeForContact(nameKey: String, limit: Int = 60): Flow<List<LifelineEntity>>
+
+    /** Recent photos that have NOT been analyzed for [nameKey] yet
+     *  (either no detected_contacts_json at all, or the JSON exists
+     *  but does not contain this contact). Used by the "retroactively
+     *  rescan after samples added" path so newly-seeded faces find
+     *  their existing photos. */
+    @Query(
+        """
+        SELECT * FROM lifeline_entries
+        WHERE is_deleted = 0 AND is_remote = 0
+          AND (detected_contacts_json IS NULL
+               OR detected_contacts_json NOT GLOB '*"' || :nameKey || '"*')
+        ORDER BY taken_ms DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun listMissingContact(nameKey: String, limit: Int = 200): List<LifelineEntity>
+
     @Query("SELECT MAX(added_ms) FROM lifeline_entries WHERE is_remote = 0")
     suspend fun lastScannedAddedMs(): Long?
 
