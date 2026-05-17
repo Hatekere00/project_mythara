@@ -440,6 +440,16 @@ fun SettingsScreen(
             Row {
                 when (sState) {
                     com.mythara.mic.supertonic.SupertonicModelStore.State.Installed -> {
+                        Button(
+                            onClick = { vm.testSupertonicVoice() },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MytharaColors.Charple,
+                                contentColor = MytharaColors.Fg,
+                            ),
+                        ) {
+                            Text("${Glyph.DiamondFilled} test voice")
+                        }
+                        Spacer(Modifier.padding(end = 6.dp))
                         TextButton(onClick = { vm.removeSupertonicVoice() }) {
                             Text("${Glyph.Cross} remove (~270 MB)", color = MytharaColors.Sriracha)
                         }
@@ -463,6 +473,15 @@ fun SettingsScreen(
                         }
                     }
                 }
+            }
+            val testResult by vm.testVoiceResult.collectAsState()
+            testResult?.let { res ->
+                Text(
+                    text = res.message,
+                    color = if (res.ok) MytharaColors.Julep else MytharaColors.Sriracha,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
             }
             Text(
                 text = "${Glyph.AccentBar} Supertonic-2 is a 66M-param multilingual on-device TTS (en/ko/es/pt/fr). When installed, it's used in place of the bundled Android TTS whenever ElevenLabs isn't configured. Better prosody, fully offline, ~270 MB one-time download. Falls back to Android TTS if synthesis fails.",

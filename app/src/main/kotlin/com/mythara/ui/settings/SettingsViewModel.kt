@@ -22,7 +22,29 @@ class SettingsViewModel @Inject constructor(
     private val gemini: GeminiVisionService,
     private val elevenLabs: ElevenLabsTtsService,
     private val supertonicStore: com.mythara.mic.supertonic.SupertonicModelStore,
+    private val tts: com.mythara.mic.Tts,
 ) : ViewModel() {
+
+    /** One-shot result of the "test voice" button so the UI can
+     *  surface a green "✓ synthesised" or a red error toast. */
+    data class TestVoiceResult(val ok: Boolean, val message: String)
+    private val _testVoiceResult = MutableStateFlow<TestVoiceResult?>(null)
+    val testVoiceResult: StateFlow<TestVoiceResult?> = _testVoiceResult.asStateFlow()
+
+    fun testSupertonicVoice() {
+        viewModelScope.launch {
+            _testVoiceResult.value = TestVoiceResult(true, "${com.mythara.ui.theme.Glyph.Ellipsis} synthesising…")
+            val ok = runCatching { tts.testSupertonic() }.getOrDefault(false)
+            _testVoiceResult.value = TestVoiceResult(
+                ok = ok,
+                message = if (ok) {
+                    "${com.mythara.ui.theme.Glyph.Check} synthesised — you should hear audio"
+                } else {
+                    "${com.mythara.ui.theme.Glyph.Cross} synthesis failed — check logcat 'Mythara/Supertonic'"
+                },
+            )
+        }
+    }
 
     /** Mirrors [SupertonicModelStore.state] for the UI panel.
      *  Collected eagerly so the SettingsScreen can render the

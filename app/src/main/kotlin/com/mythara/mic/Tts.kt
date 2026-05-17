@@ -141,6 +141,11 @@ class Tts @Inject constructor(
         scope.launch {
             val snap = runCatching { settings.snapshot() }.getOrNull()
             val useEleven = snap?.useElevenLabs == true && !snap.elevenLabsKey.isNullOrBlank()
+            val supertonicReady = !useEleven && supertonic.isReady()
+            android.util.Log.d(
+                TAG,
+                "speak: useEleven=$useEleven supertonicReady=$supertonicReady text='${text.take(40)}'",
+            )
             when {
                 useEleven ->
                     speakViaElevenLabs(text, snap!!.elevenLabsKey!!, snap.elevenLabsVoiceId, userMoodTrend)
@@ -152,13 +157,33 @@ class Tts @Inject constructor(
                 // install via the Settings panel. When not present
                 // we fall through to system TTS so the assistant
                 // still talks.
-                supertonic.isReady() ->
+                supertonicReady ->
                     speakViaSupertonic(text)
 
                 else ->
                     speakViaAndroid(text, locale, userMoodTrend)
             }
         }
+    }
+
+    /**
+     * Test-only path that forces the Supertonic engine, regardless
+     * of toggles. Called from the Settings panel's "test voice"
+     * button so the user can verify on-device synthesis works
+     * without going through chat-reply gating + ElevenLabs
+     * preference. Returns true if synthesis succeeded.
+     */
+    suspend fun testSupertonic(text: String = "hello, this is Mythara on-device voice."): Boolean {
+        android.util.Log.d(TAG, "testSupertonic: starting (text='${text.take(40)}')")
+        if (!supertonic.isReady()) {
+            android.util.Log.w(TAG, "testSupertonic: engine not ready")
+            return false
+        }
+        return supertonic.speak(
+            text = text,
+            onStart = { _speaking.value = true },
+            onDone = { _speaking.value = false },
+        )
     }
 
     private suspend fun speakViaSupertonic(text: String) {
@@ -265,5 +290,9 @@ class Tts @Inject constructor(
         elevenLabs.stop()
         runCatching { supertonic.release() }
         _speaking.value = false
+    }
+
+    companion object {
+        private const val TAG = "Mythara/Tts"
     }
 }
