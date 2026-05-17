@@ -219,6 +219,17 @@ fun MytharaRoot(
                     var amuletAnchor by remember {
                         mutableStateOf<androidx.compose.ui.geometry.Offset?>(null)
                     }
+                    // Phase A bloom-anticipation ring. At the halfway
+                    // point (300 ms) of a long-press, the detector
+                    // fires onPreBloom(pos). We mount PreAmuletRing
+                    // at the touch point. When the full 600 ms long
+                    // press commits, amuletAnchor flips non-null and
+                    // PreAmuletRing receives committed=true so it
+                    // does its one-frame cyan flash + fade hand-off
+                    // to the PopupAmulet that mounts below.
+                    var preBloomPos by remember {
+                        mutableStateOf<androidx.compose.ui.geometry.Offset?>(null)
+                    }
                     // Spotlight drawer overlay — pull-down sheet
                     // surfaced from a constellation chip. State
                     // lives at the root so it can render above
@@ -249,9 +260,11 @@ fun MytharaRoot(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .detectGlobalLongPress { pos ->
-                                amuletAnchor = pos
-                            },
+                            .detectGlobalLongPress(
+                                onPreBloom = { pos -> preBloomPos = pos },
+                                onPreBloomCancelled = { preBloomPos = null },
+                                onLongPress = { pos -> amuletAnchor = pos },
+                            ),
                     ) {
                     if (isCompact) {
                         NavHost(navController = nav, startDestination = Routes.Chat) {
@@ -475,13 +488,31 @@ fun MytharaRoot(
                             ).voiceActions()
                         } }
 
+                    // Pre-amulet particle ring — renders under the
+                    // touch point from 300 ms in, fades into a one-
+                    // frame cyan flash when the amulet commits at
+                    // 600 ms, then dismisses. Z-ordered ABOVE the
+                    // screen content but UNDER the amulet itself so
+                    // the rose blooms out of the ring rather than
+                    // beside it.
+                    preBloomPos?.let { pos ->
+                        com.mythara.ui.amulet.PreAmuletRing(
+                            anchor = pos,
+                            committed = amuletAnchor != null,
+                            onDismissed = { preBloomPos = null },
+                        )
+                    }
+
                     amuletAnchor?.let { anchor ->
                         if (amuletPages.isNotEmpty()) {
                             PopupAmulet(
                                 anchorPx = anchor,
                                 pages = amuletPages,
                                 amuletSizeDp = AMULET_SIZE_DP.value.toInt(),
-                                onScrimTap = { amuletAnchor = null },
+                                onScrimTap = {
+                                    amuletAnchor = null
+                                    preBloomPos = null
+                                },
                                 onPttPress = {
                                     pttDispatcher.fire(
                                         com.mythara.voice.VoiceActionStore.Source.RosePress,
@@ -490,6 +521,7 @@ fun MytharaRoot(
                                     // sees the chat surface react to
                                     // the listen-state.
                                     amuletAnchor = null
+                                    preBloomPos = null
                                 },
                             )
                         }
