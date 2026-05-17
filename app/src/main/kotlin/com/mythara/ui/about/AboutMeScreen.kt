@@ -214,6 +214,10 @@ class AboutMeViewModel @Inject constructor(
         val healthHistory: HealthHistory? = null,
         val healthGranted: Int = 0,
         val healthAvailable: Boolean = false,
+        /** 7-day daily aggregates for the AboutMe health panel
+         *  graph (per-metric sparkline stack). Built by
+         *  [buildHealthSeries] from `kind:health-snapshot` rows. */
+        val healthSeries: HealthSeries? = null,
         val hrTriggers: List<String> = emptyList(),
         val recommendedPeople: List<RecommendedPerson> = emptyList(),
         val suggestedApps: List<SuggestedApp> = emptyList(),
@@ -353,6 +357,10 @@ class AboutMeViewModel @Inject constructor(
             ?.let { formatHealthHistory(it.content) }
         val healthGranted = runCatching { HealthAccess.grantedCount(appContext) }.getOrDefault(0)
         val healthAvailable = HealthAccess.isAvailable(appContext)
+        val healthSeries = buildHealthSeries(
+            snapshotRows = semantic.withFacet("kind:health-snapshot"),
+            days = HEALTH_GRAPH_DEFAULT_DAYS,
+        )
 
         // 4) Heart-rate triggers.
         val hrTriggers = semantic.withFacet("topic:hr-correlation")
@@ -390,6 +398,7 @@ class AboutMeViewModel @Inject constructor(
             healthHistory = healthHistory,
             healthGranted = healthGranted,
             healthAvailable = healthAvailable,
+            healthSeries = healthSeries,
             hrTriggers = hrTriggers,
             recommendedPeople = recommended,
             suggestedApps = suggestedApps,
@@ -578,6 +587,66 @@ class AboutMeViewModel @Inject constructor(
         )
     }
 
+    /**
+     * Aggregate the last [days] of `kind:health-snapshot` rows into
+     * one [HealthSeries.DayPoint] per calendar day (today inclusive,
+     * oldest first). Each snapshot is a 24h rolling window written
+     * every 6 hours, so we collapse by day by picking the LATEST
+     * snapshot per day for that day's "today-so-far" view.
+     *
+     * Days with no snapshot row appear as a DayPoint with all
+     * metrics null — the graph leaves a visual gap there instead
+     * of inventing a zero (important for weight especially, where
+     * 0 kg on a missing day would crush the y-axis).
+     *
+     * Returns null when we have no snapshot rows at all — the
+     * health panel then shows its existing empty-state hint
+     * (grant access / building) instead of an empty graph.
+     */
+    private fun buildHealthSeries(
+        snapshotRows: List<LearningEntity>,
+        days: Int,
+    ): HealthSeries? {
+        if (snapshotRows.isEmpty()) return null
+        // Map of "yyyy-MM-dd" → most-recent JSON object that day.
+        val dayKey = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val byDay = snapshotRows
+            .sortedByDescending { it.tsMillis }
+            .groupBy { dayKey.format(Date(it.tsMillis)) }
+            .mapValues { (_, rows) -> obj(rows.first().content) }
+
+        val dowLabel = SimpleDateFormat("EEE", Locale.US)        // "Mon"
+        val dateLabel = SimpleDateFormat("MMM d", Locale.US)     // "May 11"
+        val today = System.currentTimeMillis()
+        val oneDayMs = 24L * 60 * 60 * 1000
+
+        val points = (0 until days).map { offsetFromToday ->
+            // offsetFromToday = 0 is today, days-1 is the oldest in window.
+            val tsForDay = today - offsetFromToday * oneDayMs
+            val key = dayKey.format(Date(tsForDay))
+            val o = byDay[key]
+            HealthSeries.DayPoint(
+                dayLabel = dowLabel.format(Date(tsForDay)),
+                dateLabel = dateLabel.format(Date(tsForDay)),
+                hrAvg = o?.num("hr_24h_avg"),
+                hrMin = o?.num("hr_24h_min"),
+                hrMax = o?.num("hr_24h_max"),
+                sleepHours = o?.num("sleep_24h_minutes")?.let { it / 60.0 },
+                kcal = o?.num("kcal_24h"),
+                steps = o?.num("steps_24h"),
+                weightKg = o?.num("weight_kg"),
+            )
+        }.reversed()  // oldest → newest for left-to-right plotting
+
+        // If every point is empty there's nothing to plot — let the
+        // panel fall back to its empty-state hint.
+        val any = points.any {
+            it.hrAvg != null || it.sleepHours != null ||
+                it.kcal != null || it.steps != null || it.weightKg != null
+        }
+        return if (any) HealthSeries(windowDays = days, points = points) else null
+    }
+
     private fun formatHealthSnapshot(content: String): String? {
         val o = obj(content) ?: return content.take(120)
         val parts = buildList {
@@ -685,6 +754,11 @@ class AboutMeViewModel @Inject constructor(
          *  arrived a few minutes ago without confusing genuinely
          *  stale readings for live ones. */
         private const val LIVE_HR_LOOKBACK_SEC = 600L
+
+        /** Default window for the AboutMe health graph. The user
+         *  asked for 7 days; a per-screen control could let them
+         *  zoom out to 30 / 90 later. */
+        private const val HEALTH_GRAPH_DEFAULT_DAYS = 7
     }
 }
 
@@ -895,41 +969,23 @@ fun AboutMeScreen(
                 // a perfectly normal early-state.
                 Empty("No watch heart-rate samples yet — wear the watch and make sure Samsung Health / Fitbit is sharing HR with Health Connect.")
             }
-            ui.healthSnapshot?.let {
+            // ── 7-day metrics graph ─────────────────────────────
+            // Replaces the legacy "Last 24h" + "health history"
+            // text panels. One Canvas per metric (HR / sleep / kcal
+            // / steps / weight) stacked vertically — easier to scan
+            // at a glance than a sentence summary, and the trend
+            // direction is immediately visible.
+            val series = ui.healthSeries
+            if (series != null) {
+                Spacer(Modifier.height(12.dp))
+                HealthGraph(series = series)
+            } else if (ui.healthGranted > 0) {
+                // Access granted but the worker hasn't produced any
+                // snapshot rows yet — typical on a fresh grant.
                 Spacer(Modifier.height(10.dp))
-                Stat("Last 24h (Health Connect)", "")
-                Spacer(Modifier.height(2.dp))
-                Text(it, color = MytharaColors.Fg, style = MaterialTheme.typography.bodyMedium)
-            }
-        }
-
-        Spacer(Modifier.height(12.dp))
-
-        // 5) Health history (long-range).
-        Panel("health history") {
-            val h = ui.healthHistory
-            if (h == null) {
                 Empty(
-                    if (ui.healthGranted == 0) {
-                        "Grant health access above — Mythara then pulls your last 6 months of synced data."
-                    } else {
-                        "Building — your long-range health history appears here within a day of granting access."
-                    },
+                    "Building your 7-day graph — a snapshot lands every 6 hours, so it appears once the first Health Connect read completes.",
                 )
-            } else {
-                Stat("Last ${h.windowDays} days", "")
-                if (h.headline.isNotBlank()) {
-                    Spacer(Modifier.height(2.dp))
-                    Text(h.headline, color = MytharaColors.Fg, style = MaterialTheme.typography.bodyMedium)
-                }
-                h.trend?.let {
-                    Spacer(Modifier.height(6.dp))
-                    Bullet(it)
-                }
-                h.weight?.let {
-                    Spacer(Modifier.height(4.dp))
-                    Bullet(it)
-                }
             }
         }
 
