@@ -81,6 +81,23 @@
                 <Image resource="tick_12" />
             </PartImage>
 
+            <!-- Orbiting neon-red seconds indicator. AnalogClock
+                 rotates the SecondHand image around its pivot
+                 (bottom-centre of the 44×210 source) once per
+                 minute; the visible dot sits 22 px from the image
+                 top → orbits at radius 188 from canvas centre,
+                 between the rose (radius ~90) and the tick ring
+                 (radius 220). Two halos baked into the PNG (Gaussian
+                 blur 8 + 3) give the dot a neon-orb feel against
+                 OLED black. Inside the interactive Group so the
+                 seconds animation is auto-hidden in ambient mode —
+                 critical for OLED burn-in + battery. -->
+            <AnalogClock x="0" y="0" width="450" height="450">
+                <SecondHand resource="seconds_dot"
+                    x="203" y="15" width="44" height="210"
+                    pivotX="0.5" pivotY="1.0" />
+            </AnalogClock>
+
             <!-- Brand mark: 180×180 rose centred horizontally in the
                  upper third of the face. Tapping it launches the
                  Mythara wear app (PTT-first home) — same gesture
