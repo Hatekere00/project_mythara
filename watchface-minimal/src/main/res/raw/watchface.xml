@@ -70,6 +70,17 @@
                 <Image resource="tick_marks" />
             </PartImage>
 
+            <!-- 12 o'clock marker — inverted triangle in the same
+                 neon cyan (#68FFD6) as the rose nucleus / time colon
+                 / wordmark dots. Apex points DOWN toward the rose;
+                 visually replaces the 12-position hour tick and
+                 anchors the dial's orientation at a glance. Glow
+                 baked into the PNG (Gaussian blur radius 3) for the
+                 neon look against OLED black. -->
+            <PartImage x="207" y="0" width="36" height="36">
+                <Image resource="tick_12" />
+            </PartImage>
+
             <!-- Brand mark: 180×180 rose centred horizontally in the
                  upper third of the face. Tapping it launches the
                  Mythara wear app (PTT-first home) — same gesture
