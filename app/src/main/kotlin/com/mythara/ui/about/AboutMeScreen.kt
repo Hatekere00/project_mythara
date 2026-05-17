@@ -46,6 +46,10 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.HeartRateRecord
+import androidx.health.connect.client.records.SleepSessionRecord
+import androidx.health.connect.client.records.StepsRecord
+import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
+import androidx.health.connect.client.records.WeightRecord
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -77,6 +81,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.Duration
 import java.time.Instant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -357,10 +362,12 @@ class AboutMeViewModel @Inject constructor(
             ?.let { formatHealthHistory(it.content) }
         val healthGranted = runCatching { HealthAccess.grantedCount(appContext) }.getOrDefault(0)
         val healthAvailable = HealthAccess.isAvailable(appContext)
-        val healthSeries = buildHealthSeries(
-            snapshotRows = semantic.withFacet("kind:health-snapshot"),
-            days = HEALTH_GRAPH_DEFAULT_DAYS,
-        )
+        // Raw 24-hour samples (HR + sleep + kcal + steps + weight)
+        // pulled directly from Health Connect. Each sample keeps its
+        // original timestamp so the graph plots a real time series
+        // rather than a daily aggregate.
+        val healthSeries = runCatching { readRawHealthWindow(HEALTH_GRAPH_DEFAULT_HOURS) }
+            .getOrNull()
 
         // 4) Heart-rate triggers.
         val hrTriggers = semantic.withFacet("topic:hr-correlation")
@@ -588,63 +595,89 @@ class AboutMeViewModel @Inject constructor(
     }
 
     /**
-     * Aggregate the last [days] of `kind:health-snapshot` rows into
-     * one [HealthSeries.DayPoint] per calendar day (today inclusive,
-     * oldest first). Each snapshot is a 24h rolling window written
-     * every 6 hours, so we collapse by day by picking the LATEST
-     * snapshot per day for that day's "today-so-far" view.
+     * Pull the last [hours] of RAW Health Connect samples for every
+     * record type we care about. Returns a [HealthSeries] where each
+     * sample preserves its original timestamp — the graph plots a
+     * real (time, value) scatter rather than an aggregate.
      *
-     * Days with no snapshot row appear as a DayPoint with all
-     * metrics null — the graph leaves a visual gap there instead
-     * of inventing a zero (important for weight especially, where
-     * 0 kg on a missing day would crush the y-axis).
+     * Each per-record-type read is independently permission-gated.
+     * If the user granted HR but not sleep, we still return HR
+     * samples and `sleepSessions = emptyList()`.
      *
-     * Returns null when we have no snapshot rows at all — the
-     * health panel then shows its existing empty-state hint
-     * (grant access / building) instead of an empty graph.
+     * Returns null when:
+     *  - Health Connect isn't installed (SDK_AVAILABLE check fails)
+     *  - The user has granted zero permissions
+     *  - Every read came back empty (no samples in the window)
+     *
+     * In those cases the panel falls back to its existing empty-
+     * state hint instead of rendering an empty graph.
      */
-    private fun buildHealthSeries(
-        snapshotRows: List<LearningEntity>,
-        days: Int,
-    ): HealthSeries? {
-        if (snapshotRows.isEmpty()) return null
-        // Map of "yyyy-MM-dd" → most-recent JSON object that day.
-        val dayKey = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-        val byDay = snapshotRows
-            .sortedByDescending { it.tsMillis }
-            .groupBy { dayKey.format(Date(it.tsMillis)) }
-            .mapValues { (_, rows) -> obj(rows.first().content) }
+    private suspend fun readRawHealthWindow(hours: Int): HealthSeries? {
+        return withContext(Dispatchers.IO) {
+            if (HealthConnectClient.getSdkStatus(appContext) != HealthConnectClient.SDK_AVAILABLE) {
+                return@withContext null
+            }
+            val client = runCatching { HealthConnectClient.getOrCreate(appContext) }
+                .getOrNull() ?: return@withContext null
+            val granted = runCatching { client.permissionController.getGrantedPermissions() }
+                .getOrDefault(emptySet())
+            if (granted.isEmpty()) return@withContext null
 
-        val dowLabel = SimpleDateFormat("EEE", Locale.US)        // "Mon"
-        val dateLabel = SimpleDateFormat("MMM d", Locale.US)     // "May 11"
-        val today = System.currentTimeMillis()
-        val oneDayMs = 24L * 60 * 60 * 1000
+            val end = Instant.now()
+            val start = end.minus(Duration.ofHours(hours.toLong()))
+            val window = TimeRangeFilter.between(start, end)
 
-        val points = (0 until days).map { offsetFromToday ->
-            // offsetFromToday = 0 is today, days-1 is the oldest in window.
-            val tsForDay = today - offsetFromToday * oneDayMs
-            val key = dayKey.format(Date(tsForDay))
-            val o = byDay[key]
-            HealthSeries.DayPoint(
-                dayLabel = dowLabel.format(Date(tsForDay)),
-                dateLabel = dateLabel.format(Date(tsForDay)),
-                hrAvg = o?.num("hr_24h_avg"),
-                hrMin = o?.num("hr_24h_min"),
-                hrMax = o?.num("hr_24h_max"),
-                sleepHours = o?.num("sleep_24h_minutes")?.let { it / 60.0 },
-                kcal = o?.num("kcal_24h"),
-                steps = o?.num("steps_24h"),
-                weightKg = o?.num("weight_kg"),
+            val hr = if (HealthPermission.getReadPermission(HeartRateRecord::class) in granted) {
+                runCatching {
+                    client.readRecords(ReadRecordsRequest(HeartRateRecord::class, window)).records
+                        .flatMap { rec ->
+                            rec.samples.map { s ->
+                                HealthSeries.Sample(s.time.toEpochMilli(), s.beatsPerMinute.toDouble())
+                            }
+                        }
+                }.getOrDefault(emptyList())
+            } else emptyList()
+
+            val sleepSessions = if (HealthPermission.getReadPermission(SleepSessionRecord::class) in granted) {
+                runCatching {
+                    client.readRecords(ReadRecordsRequest(SleepSessionRecord::class, window)).records
+                        .map { HealthSeries.TimeRange(it.startTime.toEpochMilli(), it.endTime.toEpochMilli()) }
+                }.getOrDefault(emptyList())
+            } else emptyList()
+
+            val kcal = if (HealthPermission.getReadPermission(TotalCaloriesBurnedRecord::class) in granted) {
+                runCatching {
+                    client.readRecords(ReadRecordsRequest(TotalCaloriesBurnedRecord::class, window)).records
+                        .map { HealthSeries.Sample(it.endTime.toEpochMilli(), it.energy.inKilocalories) }
+                }.getOrDefault(emptyList())
+            } else emptyList()
+
+            val steps = if (HealthPermission.getReadPermission(StepsRecord::class) in granted) {
+                runCatching {
+                    client.readRecords(ReadRecordsRequest(StepsRecord::class, window)).records
+                        .map { HealthSeries.Sample(it.endTime.toEpochMilli(), it.count.toDouble()) }
+                }.getOrDefault(emptyList())
+            } else emptyList()
+
+            val weight = if (HealthPermission.getReadPermission(WeightRecord::class) in granted) {
+                runCatching {
+                    client.readRecords(ReadRecordsRequest(WeightRecord::class, window)).records
+                        .map { HealthSeries.Sample(it.time.toEpochMilli(), it.weight.inKilograms) }
+                }.getOrDefault(emptyList())
+            } else emptyList()
+
+            val series = HealthSeries(
+                windowHours = hours,
+                startMs = start.toEpochMilli(),
+                endMs = end.toEpochMilli(),
+                hr = hr,
+                sleepSessions = sleepSessions,
+                kcal = kcal,
+                steps = steps,
+                weight = weight,
             )
-        }.reversed()  // oldest → newest for left-to-right plotting
-
-        // If every point is empty there's nothing to plot — let the
-        // panel fall back to its empty-state hint.
-        val any = points.any {
-            it.hrAvg != null || it.sleepHours != null ||
-                it.kcal != null || it.steps != null || it.weightKg != null
+            if (series.hasAnyData) series else null
         }
-        return if (any) HealthSeries(windowDays = days, points = points) else null
     }
 
     private fun formatHealthSnapshot(content: String): String? {
@@ -755,10 +788,11 @@ class AboutMeViewModel @Inject constructor(
          *  stale readings for live ones. */
         private const val LIVE_HR_LOOKBACK_SEC = 600L
 
-        /** Default window for the AboutMe health graph. The user
-         *  asked for 7 days; a per-screen control could let them
-         *  zoom out to 30 / 90 later. */
-        private const val HEALTH_GRAPH_DEFAULT_DAYS = 7
+        /** Default window for the AboutMe health graph — raw
+         *  Health Connect samples plotted by their actual
+         *  timestamps. 24 h is the user's spec; a per-screen
+         *  control could let them zoom out to 7d / 30d later. */
+        private const val HEALTH_GRAPH_DEFAULT_HOURS = 24
     }
 }
 

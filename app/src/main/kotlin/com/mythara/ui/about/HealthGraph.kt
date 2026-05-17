@@ -13,7 +13,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -29,90 +28,99 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mythara.ui.theme.MytharaColors
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
- * 7-day (or N-day) sparkline stack for the About-Me health panel.
+ * Raw-sample timeline plot for the About-Me health panel.
  *
- * Renders one mini Canvas per metric we know how to plot from the
- * `kind:health-snapshot` rows that [com.mythara.health.HealthLearningWorker]
- * writes every 6 hours. Each row has the day label on the left, the
- * line + dot points in the middle, and the latest value labeled on
- * the right.
+ * Plots every individual reading Health Connect returned in the
+ * configured window (default last 24h) as its own (timestamp, value)
+ * point — NOT a daily aggregate. The x-axis is real time;
+ * sample density tells you when the sensor was reading.
  *
- * Visually deliberate:
- *  - JetBrainsMono labels match the rest of the Mythara minimal
- *    aesthetic.
- *  - One brand colour per metric (Charple HR, Bok sleep, Citron
- *    kcal, Malibu steps, Julep weight) so the eye can map a
- *    glyph to a meaning instantly.
- *  - Gaps in the data (days with no snapshot) leave the line
- *    interrupted instead of drawing through zero — important for
- *    weight where a missing day shouldn't drag the line to 0 kg.
+ * One Canvas per metric, stacked vertically:
+ *  - HR     · Charple · scatter + thin line between consecutive samples
+ *  - sleep  · Bok     · horizontal bars at each session's [start, end]
+ *  - kcal   · Citron  · per-record dot at the record's end time
+ *  - steps  · Malibu  · per-record dot
+ *  - weight · Julep   · scatter dots only (typically 1-2 readings / day)
  *
- * A standalone composable so the AboutMeScreen body just embeds it
- * and we can reuse the same renderer elsewhere (e.g. a future
- * dashboard tile) without re-deriving the math.
+ * X-axis ticks are wall-clock-relative: "−24h", "−18h", "−12h",
+ * "−6h", "now" — easier to read against "what was I doing then"
+ * than absolute clock time.
+ *
+ * Gaps in the data leave the line interrupted (HR) or just an
+ * empty band (other metrics).
  */
 @Composable
 fun HealthGraph(
     series: HealthSeries,
     modifier: Modifier = Modifier,
 ) {
-    if (series.points.isEmpty()) return
+    if (!series.hasAnyData) return
 
     Column(modifier = modifier.fillMaxWidth()) {
         Text(
-            text = "Last ${series.windowDays} days",
+            text = "Past ${series.windowHours}h · raw samples",
             color = MytharaColors.FgDim,
             style = MaterialTheme.typography.bodySmall,
         )
         Spacer(Modifier.height(8.dp))
 
-        // One row per metric we have any data for. Order matches
-        // the user's likely scanning priority: HR first (most
-        // dynamic), then sleep, then activity (kcal / steps),
-        // then weight (slow-changing) last.
         MetricRow(
             label = "HR",
             unit = "bpm",
             color = MytharaColors.Charple,
-            series = series.points.map { it.hrAvg },
-            xLabels = series.points.map { it.dayLabel },
-            band = series.points.map { Pair(it.hrMin, it.hrMax) },
+            samples = series.hr,
+            windowStartMs = series.startMs,
+            windowEndMs = series.endMs,
+            connectLine = true,
         )
-        Spacer(Modifier.height(10.dp))
-        MetricRow(
-            label = "sleep",
-            unit = "h",
-            color = MytharaColors.Bok,
-            series = series.points.map { it.sleepHours },
-            xLabels = series.points.map { it.dayLabel },
-            decimals = 1,
-        )
-        Spacer(Modifier.height(10.dp))
-        MetricRow(
-            label = "kcal",
-            unit = "",
-            color = MytharaColors.Citron,
-            series = series.points.map { it.kcal },
-            xLabels = series.points.map { it.dayLabel },
-        )
-        Spacer(Modifier.height(10.dp))
-        MetricRow(
-            label = "steps",
-            unit = "",
-            color = MytharaColors.Malibu,
-            series = series.points.map { it.steps },
-            xLabels = series.points.map { it.dayLabel },
-        )
-        if (series.points.any { it.weightKg != null }) {
+        if (series.sleepSessions.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            SleepRow(
+                color = MytharaColors.Bok,
+                sessions = series.sleepSessions,
+                windowStartMs = series.startMs,
+                windowEndMs = series.endMs,
+            )
+        }
+        if (series.kcal.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            MetricRow(
+                label = "kcal",
+                unit = "",
+                color = MytharaColors.Citron,
+                samples = series.kcal,
+                windowStartMs = series.startMs,
+                windowEndMs = series.endMs,
+                connectLine = false,
+            )
+        }
+        if (series.steps.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            MetricRow(
+                label = "steps",
+                unit = "",
+                color = MytharaColors.Malibu,
+                samples = series.steps,
+                windowStartMs = series.startMs,
+                windowEndMs = series.endMs,
+                connectLine = false,
+            )
+        }
+        if (series.weight.isNotEmpty()) {
             Spacer(Modifier.height(10.dp))
             MetricRow(
                 label = "weight",
                 unit = "kg",
                 color = MytharaColors.Julep,
-                series = series.points.map { it.weightKg },
-                xLabels = series.points.map { it.dayLabel },
+                samples = series.weight,
+                windowStartMs = series.startMs,
+                windowEndMs = series.endMs,
+                connectLine = false,
                 decimals = 1,
             )
         }
@@ -124,32 +132,30 @@ private fun MetricRow(
     label: String,
     unit: String,
     color: Color,
-    series: List<Double?>,
-    xLabels: List<String>,
+    samples: List<HealthSeries.Sample>,
+    windowStartMs: Long,
+    windowEndMs: Long,
+    connectLine: Boolean,
     decimals: Int = 0,
-    band: List<Pair<Double?, Double?>>? = null,
 ) {
     val measurer = rememberTextMeasurer()
-    val labelStyle = MaterialTheme.typography.labelSmall.copy(
-        color = MytharaColors.FgDim,
-        fontSize = 10.sp,
-    )
     val valueStyle = MaterialTheme.typography.bodySmall.copy(
         color = color,
         fontWeight = FontWeight.Bold,
     )
 
-    val present = series.count { it != null }
-    val latest = series.lastOrNull { it != null }
+    val latest = samples.maxByOrNull { it.tsMs }
     val latestText = latest?.let {
-        when (decimals) {
-            0 -> it.toInt().toString()
-            else -> "%.${decimals}f".format(it)
-        } + if (unit.isNotEmpty()) " $unit" else ""
+        val v = when (decimals) {
+            0 -> it.value.toInt().toString()
+            else -> "%.${decimals}f".format(it.value)
+        }
+        val unitStr = if (unit.isNotEmpty()) " $unit" else ""
+        "$v$unitStr   ·   ${shortTime(it.tsMs)}"
     } ?: "—"
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        // Header line: glyph label + current value
+        // Header: metric label + most recent value with timestamp.
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -164,7 +170,7 @@ private fun MetricRow(
         }
         Spacer(Modifier.height(3.dp))
 
-        // The sparkline itself
+        // Sparkline canvas.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -173,127 +179,187 @@ private fun MetricRow(
                 .background(MytharaColors.SurfaceMid.copy(alpha = 0.4f))
                 .padding(horizontal = 6.dp, vertical = 4.dp),
         ) {
-            if (present == 0) {
+            if (samples.isEmpty()) {
                 Text(
-                    text = "no data yet",
+                    text = "no samples in window",
                     color = MytharaColors.FgMute,
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.align(Alignment.Center),
                 )
             } else {
                 Canvas(modifier = Modifier.fillMaxWidth().height(GRAPH_HEIGHT_DP.dp)) {
-                    val w = size.width
-                    val h = size.height - X_AXIS_TAGS_HEIGHT_PX
-
-                    // Y range — auto-scale to the actual values
-                    // with a small headroom so the line never
-                    // touches the top edge.
-                    val finite = series.filterNotNull()
-                    val yMin = finite.min()
-                    val yMax = finite.max()
-                    val pad = ((yMax - yMin) * 0.15).coerceAtLeast(0.5)
-                    val yLo = (yMin - pad).coerceAtLeast(0.0)
-                    val yHi = yMax + pad
-                    val ySpan = (yHi - yLo).coerceAtLeast(0.01)
-
-                    fun xAt(i: Int) = if (series.size == 1) w / 2f
-                        else w * i / (series.size - 1).toFloat()
-                    fun yAt(v: Double) = (h * (1f - ((v - yLo) / ySpan)).toFloat())
-                        .coerceIn(0f, h)
-
-                    // Optional min-max shaded band for HR.
-                    if (band != null) {
-                        val bandPath = Path()
-                        var first = true
-                        for (i in series.indices) {
-                            val lo = band[i].first ?: continue
-                            val x = xAt(i)
-                            val y = yAt(lo)
-                            if (first) {
-                                bandPath.moveTo(x, y); first = false
-                            } else bandPath.lineTo(x, y)
-                        }
-                        for (i in series.indices.reversed()) {
-                            val hi = band[i].second ?: continue
-                            val x = xAt(i)
-                            val y = yAt(hi)
-                            bandPath.lineTo(x, y)
-                        }
-                        bandPath.close()
-                        drawPath(bandPath, color = color.copy(alpha = 0.12f))
-                    }
-
-                    // Main line — break the path at any null gap.
-                    val path = Path()
-                    var pen = false
-                    for (i in series.indices) {
-                        val v = series[i]
-                        if (v == null) { pen = false; continue }
-                        val x = xAt(i)
-                        val y = yAt(v)
-                        if (!pen) { path.moveTo(x, y); pen = true }
-                        else path.lineTo(x, y)
-                    }
-                    drawPath(path, color = color, style = Stroke(width = 2.5f))
-
-                    // Dot per data point.
-                    for (i in series.indices) {
-                        val v = series[i] ?: continue
-                        drawCircle(
-                            color = color,
-                            radius = 3f,
-                            center = Offset(xAt(i), yAt(v)),
-                        )
-                    }
-
-                    // X-axis day labels — first / mid / last only
-                    // (a 7-point chart with all 7 labels is unreadable).
-                    val tickIndices = listOf(0, series.size / 2, series.size - 1).distinct()
-                    for (i in tickIndices) {
-                        val text = xLabels[i]
-                        val layout = measurer.measure(
-                            text = text,
-                            style = TextStyle(color = MytharaColors.FgMute, fontSize = 9.sp),
-                        )
-                        val x = (xAt(i) - layout.size.width / 2f)
-                            .coerceIn(0f, w - layout.size.width)
-                        drawText(
-                            layout,
-                            topLeft = Offset(x, size.height - layout.size.height),
-                        )
-                    }
+                    drawTimeAxis(measurer, windowStartMs, windowEndMs, size)
+                    drawScatter(
+                        samples = samples,
+                        color = color,
+                        windowStartMs = windowStartMs,
+                        windowEndMs = windowEndMs,
+                        size = size,
+                        connectLine = connectLine,
+                    )
                 }
             }
         }
     }
 }
 
-/**
- * Daily-aggregated health data for the AboutMe panel.
- *
- * `points` is ordered oldest → newest with one entry per calendar
- * day in the window. Days with no health-snapshot row in the vault
- * appear as a [DayPoint] with all metrics null — the graph leaves
- * a gap rather than drawing a fake zero.
- */
-data class HealthSeries(
-    val windowDays: Int,
-    val points: List<DayPoint>,
+@Composable
+private fun SleepRow(
+    color: Color,
+    sessions: List<HealthSeries.TimeRange>,
+    windowStartMs: Long,
+    windowEndMs: Long,
 ) {
-    data class DayPoint(
-        /** "Mon" / "Tue" / ... — short day-of-week label for x-axis. */
-        val dayLabel: String,
-        /** "May 11" — full date for tooltips/captions. */
-        val dateLabel: String,
-        val hrAvg: Double?,
-        val hrMin: Double?,
-        val hrMax: Double?,
-        val sleepHours: Double?,
-        val kcal: Double?,
-        val steps: Double?,
-        val weightKg: Double?,
+    val measurer = rememberTextMeasurer()
+    val valueStyle = MaterialTheme.typography.bodySmall.copy(
+        color = color,
+        fontWeight = FontWeight.Bold,
     )
+
+    val totalMs = sessions.sumOf { it.endMs.coerceAtMost(windowEndMs) - it.startMs.coerceAtLeast(windowStartMs) }
+        .coerceAtLeast(0L)
+    val hrs = totalMs / 3_600_000.0
+    val latestText = "%.1f h total".format(hrs)
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "sleep",
+                color = color,
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+            )
+            Spacer(Modifier.weight(1f))
+            Text(text = latestText, style = valueStyle)
+        }
+        Spacer(Modifier.height(3.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(GRAPH_HEIGHT_DP.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(MytharaColors.SurfaceMid.copy(alpha = 0.4f))
+                .padding(horizontal = 6.dp, vertical = 4.dp),
+        ) {
+            Canvas(modifier = Modifier.fillMaxWidth().height(GRAPH_HEIGHT_DP.dp)) {
+                drawTimeAxis(measurer, windowStartMs, windowEndMs, size)
+                val bandH = (size.height - X_AXIS_TAGS_HEIGHT_PX) * 0.55f
+                val bandY = (size.height - X_AXIS_TAGS_HEIGHT_PX) * 0.20f
+                val span = (windowEndMs - windowStartMs).toFloat().coerceAtLeast(1f)
+                for (s in sessions) {
+                    val s0 = s.startMs.coerceAtLeast(windowStartMs)
+                    val s1 = s.endMs.coerceAtMost(windowEndMs)
+                    if (s1 <= s0) continue
+                    val x0 = size.width * (s0 - windowStartMs) / span
+                    val x1 = size.width * (s1 - windowStartMs) / span
+                    drawRect(
+                        color = color.copy(alpha = 0.75f),
+                        topLeft = Offset(x0, bandY),
+                        size = Size((x1 - x0).coerceAtLeast(2f), bandH),
+                    )
+                }
+            }
+        }
+    }
 }
 
-private const val GRAPH_HEIGHT_DP = 64
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawScatter(
+    samples: List<HealthSeries.Sample>,
+    color: Color,
+    windowStartMs: Long,
+    windowEndMs: Long,
+    size: Size,
+    connectLine: Boolean,
+) {
+    if (samples.isEmpty()) return
+    val w = size.width
+    val h = size.height - X_AXIS_TAGS_HEIGHT_PX
+    val tSpan = (windowEndMs - windowStartMs).toFloat().coerceAtLeast(1f)
+
+    val vMin = samples.minOf { it.value }
+    val vMax = samples.maxOf { it.value }
+    val pad = ((vMax - vMin) * 0.15).coerceAtLeast(0.5)
+    val yLo = (vMin - pad).coerceAtLeast(0.0)
+    val yHi = vMax + pad
+    val ySpan = (yHi - yLo).coerceAtLeast(0.01)
+
+    fun xAt(ts: Long) = (w * (ts - windowStartMs) / tSpan).coerceIn(0f, w)
+    fun yAt(v: Double) = (h * (1f - ((v - yLo) / ySpan)).toFloat()).coerceIn(0f, h)
+
+    if (connectLine && samples.size > 1) {
+        val sorted = samples.sortedBy { it.tsMs }
+        val path = Path()
+        path.moveTo(xAt(sorted.first().tsMs), yAt(sorted.first().value))
+        for (i in 1 until sorted.size) {
+            path.lineTo(xAt(sorted[i].tsMs), yAt(sorted[i].value))
+        }
+        drawPath(path, color = color.copy(alpha = 0.7f), style = Stroke(width = 1.5f))
+    }
+
+    for (s in samples) {
+        drawCircle(
+            color = color,
+            radius = SCATTER_DOT_RADIUS_PX,
+            center = Offset(xAt(s.tsMs), yAt(s.value)),
+        )
+    }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawTimeAxis(
+    measurer: androidx.compose.ui.text.TextMeasurer,
+    windowStartMs: Long,
+    windowEndMs: Long,
+    size: Size,
+) {
+    val w = size.width
+    // 5 ticks evenly spaced. Labels are "−24h" / "−18h" / "−12h"
+    // / "−6h" / "now" relative to the window end.
+    val ticks = 5
+    val tickStyle = TextStyle(color = MytharaColors.FgMute, fontSize = 9.sp)
+    for (i in 0 until ticks) {
+        val frac = i / (ticks - 1).toFloat()
+        val tsAt = windowStartMs + ((windowEndMs - windowStartMs) * frac).toLong()
+        val agoH = ((windowEndMs - tsAt) / 3_600_000.0).toInt()
+        val label = if (agoH == 0) "now" else "−${agoH}h"
+        val layout = measurer.measure(text = label, style = tickStyle)
+        val x = (w * frac - layout.size.width / 2f).coerceIn(0f, w - layout.size.width)
+        drawText(
+            layout,
+            topLeft = Offset(x, size.height - layout.size.height),
+        )
+    }
+}
+
+private fun shortTime(tsMs: Long): String =
+    SimpleDateFormat("HH:mm", Locale.US).format(Date(tsMs))
+
+/**
+ * Raw-sample series for the past N hours of Health Connect data.
+ *
+ * Each metric carries the individual readings (no aggregation),
+ * with their original timestamps. The graph plots each as a
+ * scatter point against a continuous time axis.
+ */
+data class HealthSeries(
+    val windowHours: Int,
+    val startMs: Long,
+    val endMs: Long,
+    val hr: List<Sample> = emptyList(),
+    val sleepSessions: List<TimeRange> = emptyList(),
+    val kcal: List<Sample> = emptyList(),
+    val steps: List<Sample> = emptyList(),
+    val weight: List<Sample> = emptyList(),
+) {
+    data class Sample(val tsMs: Long, val value: Double)
+    data class TimeRange(val startMs: Long, val endMs: Long)
+
+    val hasAnyData: Boolean
+        get() = hr.isNotEmpty() || sleepSessions.isNotEmpty() ||
+            kcal.isNotEmpty() || steps.isNotEmpty() || weight.isNotEmpty()
+}
+
+private const val GRAPH_HEIGHT_DP = 72
 private const val X_AXIS_TAGS_HEIGHT_PX = 18f
+private const val SCATTER_DOT_RADIUS_PX = 2.5f
