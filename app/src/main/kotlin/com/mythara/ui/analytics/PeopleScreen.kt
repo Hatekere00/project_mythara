@@ -128,15 +128,90 @@ class PeopleViewModel @Inject constructor(
     val selectedLivePersona: StateFlow<ContactLivePersona?> =
         _selectedLivePersona.asStateFlow()
 
+    /**
+     * Free-form + structured "remembered" facts about ONE contact.
+     * Sourced from `target:contact:<nameKey>` + `src:user-asked`
+     * vault rows that [com.mythara.agent.tools.RememberTool] writes.
+     */
+    data class ContactRememberedFacts(
+        val nameKey: String,
+        /** YYYY-MM-DD or MM-DD when set. Pulled from the
+         *  `value:<date>` facet on a `kind:birthday` row. */
+        val birthday: String? = null,
+        /** Same shape, but for the `kind:anniversary` row. */
+        val anniversary: String? = null,
+        /** Structured preferences ("vegan", "loves jazz" …). */
+        val preferences: List<String> = emptyList(),
+        /** Free-form notes the agent stored as kind:fact (default). */
+        val notes: List<String> = emptyList(),
+        /** Anything else (location, milestone, contact-info, etc.) —
+         *  rendered as "kind: content" lines so nothing gets lost. */
+        val other: List<Pair<String, String>> = emptyList(),
+    ) {
+        fun isEmpty(): Boolean =
+            birthday == null && anniversary == null &&
+                preferences.isEmpty() && notes.isEmpty() && other.isEmpty()
+    }
+
+    private val _selectedRememberedFacts =
+        MutableStateFlow<ContactRememberedFacts?>(null)
+    val selectedRememberedFacts: StateFlow<ContactRememberedFacts?> =
+        _selectedRememberedFacts.asStateFlow()
+
     /** Called from PeopleScreen when the user picks a contact. Pulls
      *  every `kind:trait` + `target:contact:<nameKey>` row from the
-     *  vault and aggregates it the same way AboutMe does for self. */
+     *  vault and aggregates it the same way AboutMe does for self.
+     *  Also fans out [loadRememberedFor] so the new "Mythara remembers"
+     *  card lights up at the same time. */
     fun loadLivePersonaFor(nameKey: String) {
         viewModelScope.launch {
             _selectedLivePersona.value = withContext(Dispatchers.IO) {
                 buildContactPersona(nameKey)
             }
+            _selectedRememberedFacts.value = withContext(Dispatchers.IO) {
+                buildContactRemembered(nameKey)
+            }
         }
+    }
+
+    private suspend fun buildContactRemembered(nameKey: String): ContactRememberedFacts {
+        val all = runCatching {
+            vault.listByTier(com.mythara.memory.Tier.Semantic, limit = 1000)
+        }.getOrDefault(emptyList())
+        val rows = all.filter { row ->
+            val facets = vault.decodeFacets(row)
+            ("contact:$nameKey" in facets || "target:contact:$nameKey" in facets) &&
+                "src:user-asked" in facets
+        }
+        if (rows.isEmpty()) return ContactRememberedFacts(nameKey)
+        var birthday: String? = null
+        var anniversary: String? = null
+        val preferences = mutableListOf<String>()
+        val notes = mutableListOf<String>()
+        val other = mutableListOf<Pair<String, String>>()
+        for (row in rows.sortedByDescending { it.tsMillis }) {
+            val facets = vault.decodeFacets(row)
+            val kinds = facets.filter { it.startsWith("kind:") }.map { it.removePrefix("kind:") }
+            val value = facets.firstOrNull { it.startsWith("value:") }?.removePrefix("value:")
+            when {
+                "birthday" in kinds -> if (birthday == null) birthday = value ?: row.content
+                "anniversary" in kinds -> if (anniversary == null) anniversary = value ?: row.content
+                "preference" in kinds -> preferences.add(value ?: row.content)
+                "fact" in kinds || kinds.size == 1 -> notes.add(row.content)
+                else -> {
+                    val niceKind = kinds.firstOrNull { it != "user-stated" } ?: "fact"
+                    other.add(niceKind to row.content)
+                }
+            }
+        }
+        return ContactRememberedFacts(
+            nameKey = nameKey,
+            birthday = birthday,
+            anniversary = anniversary,
+            preferences = preferences.distinct().take(12),
+            notes = notes.distinct().take(20),
+            other = other.take(20),
+        )
     }
 
     private suspend fun buildContactPersona(nameKey: String): ContactLivePersona? {
@@ -584,9 +659,11 @@ fun PeopleScreen(
                 vm.loadLivePersonaFor(selected.nameKey)
             }
             val livePersona by vm.selectedLivePersona.collectAsState()
+            val remembered by vm.selectedRememberedFacts.collectAsState()
             ProfileDetail(
                 p = selected,
                 livePersona = livePersona.takeIf { it?.nameKey == selected.nameKey },
+                remembered = remembered.takeIf { it?.nameKey == selected.nameKey },
                 onSetPhoto = { uri -> vm.setContactPhoto(selected.nameKey, uri) },
                 onClearPhoto = { vm.clearContactPhoto(selected.nameKey) },
                 vm = vm,
@@ -988,6 +1065,11 @@ private fun ProfileDetail(
      *  the extractor hasn't yet logged any contact-targeted rows for
      *  them. Loaded by PeopleScreen's LaunchedEffect on selection. */
     livePersona: PeopleViewModel.ContactLivePersona?,
+    /** Structured + free-form facts the user told the agent about
+     *  this contact (birthday / anniversary / preferences / notes).
+     *  Populated by [RememberTool] and loaded by the same
+     *  LaunchedEffect that loads livePersona. */
+    remembered: PeopleViewModel.ContactRememberedFacts?,
     onSetPhoto: (Uri) -> Unit,
     onClearPhoto: () -> Unit,
     vm: PeopleViewModel,
@@ -1120,6 +1202,62 @@ private fun ProfileDetail(
                 color = if (p.relationshipSummary != null) MytharaColors.Fg else MytharaColors.FgDim,
                 style = MaterialTheme.typography.bodyMedium,
             )
+        }
+
+        // ── Mythara remembers — birthday / anniversary / preferences /
+        //   notes the user has told the agent about this contact.
+        //   The card hides when there's nothing remembered yet so it
+        //   doesn't add visual noise to brand-new contacts.
+        if (remembered != null && !remembered.isEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            DetailCard("${Glyph.DiamondOutline} Mythara remembers") {
+                remembered.birthday?.let {
+                    DetailRow("birthday", formatRememberedDate(it))
+                }
+                remembered.anniversary?.let {
+                    DetailRow("anniversary", formatRememberedDate(it))
+                }
+                if (remembered.preferences.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "${Glyph.AccentBar} preferences",
+                        color = MytharaColors.Charple,
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = remembered.preferences.joinToString(" · "),
+                        color = MytharaColors.Fg,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                if (remembered.notes.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "${Glyph.AccentBar} notes",
+                        color = MytharaColors.Charple,
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    remembered.notes.forEach { note ->
+                        Text(
+                            text = "• $note",
+                            color = MytharaColors.Fg,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+                if (remembered.other.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    remembered.other.forEach { (kind, content) ->
+                        Text(
+                            text = "• [$kind] $content",
+                            color = MytharaColors.FgDim,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            }
         }
 
         val topics = parseStringList(p.topTopicsJson)
@@ -1546,6 +1684,31 @@ private fun Avatar(profile: ContactProfileRow, large: Boolean = false) {
 private val TIME_FMT = SimpleDateFormat("MMM d, HH:mm", Locale.US)
 
 private fun formatTs(ts: Long): String = TIME_FMT.format(Date(ts))
+
+/** Render an ISO date stored by [RememberTool] (YYYY-MM-DD or
+ *  MM-DD when the year is unknown) as a friendly "March 5" or
+ *  "March 5, 1992". Falls back to the raw string when the input
+ *  doesn't match either ISO shape — covers the case where the
+ *  agent stored an unstructured value. */
+private fun formatRememberedDate(raw: String): String {
+    val months = listOf(
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December",
+    )
+    Regex("""^(\d{4})-(\d{2})-(\d{2})$""").matchEntire(raw)?.let { m ->
+        val (yy, mm, dd) = m.destructured
+        val idx = mm.toIntOrNull()?.minus(1) ?: return raw
+        if (idx !in months.indices) return raw
+        return "${months[idx]} ${dd.toInt()}, $yy"
+    }
+    Regex("""^(\d{2})-(\d{2})$""").matchEntire(raw)?.let { m ->
+        val (mm, dd) = m.destructured
+        val idx = mm.toIntOrNull()?.minus(1) ?: return raw
+        if (idx !in months.indices) return raw
+        return "${months[idx]} ${dd.toInt()}"
+    }
+    return raw
+}
 
 private fun formatRelativeTs(ts: Long): String {
     val delta = System.currentTimeMillis() - ts

@@ -229,6 +229,14 @@ class AboutMeViewModel @Inject constructor(
         val usageGranted: Boolean = false,
         val deviceSensors: String? = null,
         val knownFacts: List<String> = emptyList(),
+        /** Structured self-birthday from a `kind:birthday` + `target:self`
+         *  RememberTool row, in whatever form the agent stored
+         *  (preferably ISO YYYY-MM-DD or MM-DD). */
+        val selfBirthday: String? = null,
+        /** Same shape, but `kind:anniversary`. */
+        val selfAnniversary: String? = null,
+        /** All structured `kind:preference` values for self. */
+        val selfPreferences: List<String> = emptyList(),
         val vaultTotal: Int = 0,
         /** Per-turn-derived persona snapshot from [PersonaTraitExtractor].
          *  Null until at least one persona-trait record has been
@@ -386,9 +394,29 @@ class AboutMeViewModel @Inject constructor(
         val deviceSensors = semantic.withFacet("kind:sensor-snapshot")
             .firstOrNull()
             ?.let { formatSensorSnapshot(it.content) }
-        val knownFacts = semantic.withFacet("src:user-asked")
-            .take(10)
-            .map { it.content.trim() }
+        val rememberedRows = semantic.withFacet("src:user-asked")
+            // Drop contact-targeted rows from the SELF panel — those
+            // surface on the People screen instead.
+            .filterNot { row -> vault.decodeFacets(row).any { it.startsWith("contact:") } }
+        val knownFacts = rememberedRows.take(10).map { it.content.trim() }
+        // Structured pulls — first matching row per kind wins, value
+        // facet preferred over the prose content.
+        fun firstValueForKind(kind: String): String? = rememberedRows.firstOrNull { row ->
+            "kind:$kind" in vault.decodeFacets(row)
+        }?.let { row ->
+            vault.decodeFacets(row).firstOrNull { it.startsWith("value:") }?.removePrefix("value:")
+                ?: row.content.trim()
+        }
+        val selfBirthday = firstValueForKind("birthday")
+        val selfAnniversary = firstValueForKind("anniversary")
+        val selfPreferences = rememberedRows
+            .filter { "kind:preference" in vault.decodeFacets(it) }
+            .map { row ->
+                vault.decodeFacets(row).firstOrNull { it.startsWith("value:") }?.removePrefix("value:")
+                    ?: row.content.trim()
+            }
+            .distinct()
+            .take(12)
 
         // 8) Live persona — aggregate the per-turn records the
         //    PersonaTraitExtractor has been writing since the last
@@ -412,6 +440,9 @@ class AboutMeViewModel @Inject constructor(
             usageGranted = usageGranted,
             deviceSensors = deviceSensors,
             knownFacts = knownFacts,
+            selfBirthday = selfBirthday,
+            selfAnniversary = selfAnniversary,
+            selfPreferences = selfPreferences,
             vaultTotal = total,
             livePersona = livePersona,
         )
@@ -1081,12 +1112,47 @@ fun AboutMeScreen(
 
         // 9) What Mythara remembers.
         Panel("what Mythara remembers") {
-            if (ui.knownFacts.isEmpty()) {
-                Empty("Nothing yet — say \"remember that…\" and Mythara will keep it here.")
+            val empty = ui.knownFacts.isEmpty() && ui.selfBirthday == null &&
+                ui.selfAnniversary == null && ui.selfPreferences.isEmpty()
+            if (empty) {
+                Empty(
+                    "Nothing yet — share anything (\"my birthday is March 5\", \"I'm vegan\") " +
+                        "and Mythara will keep it here. The agent defaults to remembering.",
+                )
             } else {
-                ui.knownFacts.forEachIndexed { i, line ->
-                    if (i > 0) Spacer(Modifier.height(6.dp))
-                    Bullet(line)
+                ui.selfBirthday?.let {
+                    Stat("birthday", formatRememberedSelfDate(it))
+                }
+                ui.selfAnniversary?.let {
+                    Spacer(Modifier.height(2.dp))
+                    Stat("anniversary", formatRememberedSelfDate(it))
+                }
+                if (ui.selfPreferences.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "${Glyph.AccentBar} preferences",
+                        color = MytharaColors.Charple,
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = ui.selfPreferences.joinToString(" · "),
+                        color = MytharaColors.Fg,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                if (ui.knownFacts.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "${Glyph.AccentBar} notes",
+                        color = MytharaColors.Charple,
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    ui.knownFacts.forEachIndexed { i, line ->
+                        if (i > 0) Spacer(Modifier.height(6.dp))
+                        Bullet(line)
+                    }
                 }
             }
         }
@@ -1327,6 +1393,30 @@ private fun LivePersonaPanel(lp: AboutMeViewModel.LivePersona) {
             style = MaterialTheme.typography.labelSmall,
         )
     }
+}
+
+/** Render an ISO date stored by RememberTool (YYYY-MM-DD or MM-DD
+ *  when the year is unknown) as a friendly "March 5" / "March 5, 1992".
+ *  Anything else passes through verbatim — covers free-form values
+ *  the agent may have stored before normalisation. */
+private fun formatRememberedSelfDate(raw: String): String {
+    val months = listOf(
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December",
+    )
+    Regex("""^(\d{4})-(\d{2})-(\d{2})$""").matchEntire(raw)?.let { m ->
+        val (yy, mm, dd) = m.destructured
+        val idx = mm.toIntOrNull()?.minus(1) ?: return raw
+        if (idx !in months.indices) return raw
+        return "${months[idx]} ${dd.toInt()}, $yy"
+    }
+    Regex("""^(\d{2})-(\d{2})$""").matchEntire(raw)?.let { m ->
+        val (mm, dd) = m.destructured
+        val idx = mm.toIntOrNull()?.minus(1) ?: return raw
+        if (idx !in months.indices) return raw
+        return "${months[idx]} ${dd.toInt()}"
+    }
+    return raw
 }
 
 /** Compact "5 s ago / 12 m ago / 3 h ago / Mar 4, 2:15 PM" formatter

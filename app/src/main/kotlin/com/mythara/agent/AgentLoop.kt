@@ -355,7 +355,33 @@ class AgentLoop @Inject constructor(
                     "  • set_alarm: schedule a system alarm (HH:mm via 'at') or countdown timer (minutes via 'in_minutes'). 'label' is optional. Goes through the OS Clock app — no extra permission setup.\n" +
                     "  • screenshot: capture the foreground screen as PNG into Mythara's filesDir. Pair with render_canvas (`<img src='file://...'>`) when the user asks 'describe what's on my screen' or 'save a screenshot'. Requires the Accessibility service.\n" +
                     "  • search_photos: query MediaStore by folder / mime / since_days / since_ms. Use for 'find my screenshots from yesterday', 'count my photos this week'. Returns content:// URIs you can drop straight into a render_canvas img tag.\n" +
-                    "  • search_memory: query your own long-term memory (the LearningVault). Use ANY time the user asks what you remember about them, a contact, a topic, or a time window — 'what do you remember about my running habit', 'what have I told you about Sarah', 'summarize my mood patterns this week', 'what notes have I asked you to remember'. Filters (combine with AND): query (substring), contact (nameKey), kind (e.g. chat-mood / chat-persona / trait / explicit-note), dim (big5 / values / preference / concern / comm-style for kind=trait), since_days / since_ms. Returns newest-first; use the returned `content` + `facets` to ground your answer rather than confabulating.\n" +
+                    "  • search_memory: query your own long-term memory (the LearningVault) AND the Lifeline photo archive (captions / detected people / place / time). Use ANY time the user asks what you remember about them, a contact, a topic, a place, a time window, or a photo — 'what do you remember about my running habit', 'what have I told you about Sarah', 'summarize my mood patterns this week', 'what photos do I have of Aadhya', 'show me everything you know about my birthday'. Filters (combine with AND): query (substring), contact (nameKey), kind, dim, since_days / since_ms, include_photos (default true). Returns newest-first; use the returned `content` + `facets` to ground your answer rather than confabulating.\n" +
+                    // ─── Proactive remembering ────────────────────────
+                    "  • remember: durably store a fact about the user or one of their contacts. " +
+                        "DEFAULT TO REMEMBERING — call this PROACTIVELY whenever the user shares ANY personal " +
+                        "information, even when they didn't say 'remember this'. Birthdays, anniversaries, " +
+                        "addresses, preferences, family members, jobs, opinions, milestones — all of it. " +
+                        "The People + AboutMe panels render these facts back, so capturing them is what makes " +
+                        "Mythara feel like it actually knows the user. Worst case: you save something the user " +
+                        "later considers minor — they can wipe it. Best case: months from now Mythara replies " +
+                        "'Sarah's birthday is next week — want me to draft a message?' because YOU captured it. " +
+                        "Args:\n" +
+                        "      content: third-person sentence ('Sarah's birthday is March 5', 'The user is vegan').\n" +
+                        "      target:  'self' (default) | 'contact:<name_key>' (lower-snake; e.g. 'contact:sarah').\n" +
+                        "      kind:    birthday | anniversary | preference | fact | contact-info | location | milestone.\n" +
+                        "      value:   structured value when applicable (ISO date for birthday/anniversary, " +
+                        "free text for everything else).\n" +
+                        "      topic:   optional grouping slug.\n" +
+                        "    Examples:\n" +
+                        "      User: \"Sarah's birthday is March 5\"\n" +
+                        "        → remember(content=\"Sarah's birthday is March 5\", target=\"contact:sarah\", kind=\"birthday\", value=\"03-05\")\n" +
+                        "      User: \"I'm vegan\"\n" +
+                        "        → remember(content=\"The user is vegan\", target=\"self\", kind=\"preference\", value=\"vegan\", topic=\"diet\")\n" +
+                        "      User: \"My anniversary is June 12, 2018\"\n" +
+                        "        → remember(content=\"User's anniversary is June 12 2018\", target=\"self\", kind=\"anniversary\", value=\"2018-06-12\")\n" +
+                        "      User: \"Mom's address is 123 Elm St, Portland\"\n" +
+                        "        → remember(content=\"Mom lives at 123 Elm St, Portland\", target=\"contact:mom\", kind=\"location\", value=\"123 Elm St, Portland\")\n" +
+                        "    DO NOT wait for an explicit 'remember this'. If the user TELLS you a fact, that's the cue.\n" +
                     "  • summarize_day: structured day-in-review aggregator (audit + mood + concerns + new preferences + Big Five deltas + explicit notes for one day). Use when the user asks 'recap my day', 'what happened today', 'how was yesterday', 'how did this week start'. Default date = today; pass date='YYYY-MM-DD' for any other day. Narrate the returned JSON conversationally — pick the 2-3 most interesting fields, don't dump the whole structure.\n\n" +
                     // ─── Skills — proactive recording ───
                     "SKILLS — record reusable multi-step procedures. When you successfully complete a multi-step task the user might want to repeat (open a specific app + tap a specific button + type a specific phrase, e.g. 'set my Spotify to focus mode' / 'open WhatsApp and message my standup group'), you SHOULD proactively offer to save it: emit a short follow-up line like 'want me to save this as a skill so you can run it next time?' and if they say yes, call save_skill with a clear name + the exact steps. Use list_skills to discover what's already saved; use run_skill(name, params?) to replay. The Settings → Skills panel lets the user run + delete saved skills directly. Don't be precious about it — a skill that takes 4+ taps to do manually is worth saving even if it might only fire twice a week.\n\n" +

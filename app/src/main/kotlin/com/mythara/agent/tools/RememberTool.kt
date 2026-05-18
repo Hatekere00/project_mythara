@@ -44,13 +44,16 @@ class RememberTool @Inject constructor(
 
     override val name: String = "remember"
     override val description: String =
-        "Durably remember a fact the user explicitly asked you to keep. Use this whenever the user says " +
-            "'remember that…', 'don't forget…', 'keep in mind…', or 'note that…'. " +
-            "The fact is stored in long-term memory WITH an embedding, so it becomes a first-class source that " +
-            "informs your future answers via semantic recall — and it syncs to the user's other Mythara devices " +
-            "immediately. Phrase `content` as a clear standalone third-person statement about the user " +
-            "(e.g. 'The user's wifi password is hunter2', 'The user's daughter is named Mira'). " +
-            "Optionally pass a short hyphenated `topic` slug to group it."
+        "Durably remember a fact about the user or one of their contacts. Use PROACTIVELY whenever the " +
+            "user shares ANY personal information — birthdays, anniversaries, preferences, family members, " +
+            "addresses, milestones, opinions — even if they didn't say 'remember this'. " +
+            "Default to remembering; the user can always wipe later. " +
+            "Phrase `content` as a clear standalone third-person sentence " +
+            "(e.g. 'Sarah's birthday is March 5', 'The user is vegan', 'The user's wifi password is hunter2'). " +
+            "Set `target` to 'self' (default) or 'contact:<name_key>' (lower-snake) so the People + AboutMe " +
+            "panels can route it to the right card. Set `kind` to one of " +
+            "birthday / anniversary / preference / fact / contact-info / location / milestone (defaults to 'fact'). " +
+            "For dates pass `value` in ISO form (YYYY-MM-DD or MM-DD when the year is unknown)."
 
     override val parameters: JsonObject = buildJsonObject {
         put("type", "object")
@@ -63,7 +66,43 @@ class RememberTool @Inject constructor(
                         put("type", "string")
                         put(
                             "description",
-                            "The fact to remember, as a clear standalone third-person statement about the user.",
+                            "The fact to remember, as a clear standalone third-person sentence " +
+                                "(e.g. 'Sarah's birthday is March 5', 'The user is vegan').",
+                        )
+                    },
+                )
+                put(
+                    "target",
+                    buildJsonObject {
+                        put("type", "string")
+                        put(
+                            "description",
+                            "Who this fact is about. 'self' (default) for the user themselves, " +
+                                "or 'contact:<name_key>' for a contact (lowercase, hyphens for spaces, " +
+                                "e.g. 'contact:sarah', 'contact:mom', 'contact:roselyn-mathew').",
+                        )
+                    },
+                )
+                put(
+                    "kind",
+                    buildJsonObject {
+                        put("type", "string")
+                        put(
+                            "description",
+                            "Structured fact type so the People / AboutMe UI can render it. One of: " +
+                                "birthday, anniversary, preference, fact (default), contact-info, location, milestone.",
+                        )
+                    },
+                )
+                put(
+                    "value",
+                    buildJsonObject {
+                        put("type", "string")
+                        put(
+                            "description",
+                            "Optional structured value for the fact. For birthday/anniversary use ISO date " +
+                                "(YYYY-MM-DD or MM-DD when the year is unknown). For preference/contact-info " +
+                                "any short value like 'vegan', 'sarah@example.com', '+15551234567'.",
                         )
                     },
                 )
@@ -73,7 +112,7 @@ class RememberTool @Inject constructor(
                         put("type", "string")
                         put(
                             "description",
-                            "Optional short hyphenated topic slug for grouping (e.g. 'wifi', 'family', 'preferences').",
+                            "Optional short hyphenated topic slug for grouping (e.g. 'wifi', 'family', 'travel').",
                         )
                     },
                 )
@@ -90,6 +129,22 @@ class RememberTool @Inject constructor(
             ?.replace(Regex("[^a-z0-9]+"), "-")
             ?.trim('-')
             ?.takeIf { it.isNotBlank() }
+        val target = (args["target"] as? JsonPrimitive)?.content?.trim()
+            ?.lowercase()
+            ?.takeIf { it.isNotBlank() }
+            ?: "self"
+        val kind = (args["kind"] as? JsonPrimitive)?.content?.trim()
+            ?.lowercase()
+            ?.takeIf { it in ALLOWED_KINDS }
+            ?: "fact"
+        val rawValue = (args["value"] as? JsonPrimitive)?.content?.trim()
+        // Normalize date values to ISO (MM-DD or YYYY-MM-DD) so the
+        // UI can render birthdays + anniversaries consistently. Free-
+        // form values (preferences etc.) pass through unchanged.
+        val value = when (kind) {
+            "birthday", "anniversary" -> rawValue?.let { normalizeIsoDate(it) }
+            else -> rawValue
+        }
 
         // Embed so SemanticRecall can surface this on future turns —
         // recall only scans vault rows that HAVE an embedding.
@@ -100,8 +155,26 @@ class RememberTool @Inject constructor(
         }
 
         val facets = buildList {
+            add("kind:$kind")
+            // user-stated is the source — distinguishes user-told
+            // facts from extracted ones (kind:trait, kind:health-snapshot etc.).
             add("kind:user-stated")
             add("src:user-asked")
+            // Routing facet: "target:self" or "target:contact:<key>".
+            // Strip a "contact:" prefix if the user passed only a
+            // bare contact name without the "target:" prefix.
+            val targetFacet = when {
+                target == "self" -> "target:self"
+                target.startsWith("contact:") -> "target:$target"
+                else -> "target:contact:${target.replace(Regex("[^a-z0-9]+"), "-").trim('-')}"
+            }
+            add(targetFacet)
+            // Mirror "contact:<key>" so existing People-screen queries
+            // (which look for that facet) pick this row up too.
+            if (targetFacet.startsWith("target:contact:")) {
+                add(targetFacet.removePrefix("target:"))
+            }
+            if (!value.isNullOrBlank()) add("value:$value")
             if (topic != null) add("topic:$topic")
         }
         val stored = runCatching {
@@ -152,7 +225,58 @@ class RememberTool @Inject constructor(
         return ToolResult(true, payload.toString())
     }
 
+    /** Accept a handful of common date phrasings and return the ISO
+     *  form. Returns null when we can't confidently parse — caller
+     *  then keeps the human phrasing as-is in the value facet. */
+    private fun normalizeIsoDate(raw: String): String? {
+        val s = raw.trim()
+        // Already ISO?
+        Regex("""^\d{4}-\d{2}-\d{2}$""").matchEntire(s)?.let { return s }
+        Regex("""^\d{2}-\d{2}$""").matchEntire(s)?.let { return s }
+        // "MM/DD" or "MM/DD/YYYY"
+        Regex("""^(\d{1,2})/(\d{1,2})(?:/(\d{4}))?$""").matchEntire(s)?.let { m ->
+            val (mm, dd, yy) = m.destructured
+            val month = mm.padStart(2, '0')
+            val day = dd.padStart(2, '0')
+            return if (yy.isNotEmpty()) "$yy-$month-$day" else "$month-$day"
+        }
+        // "March 5" / "March 5, 2024" / "Mar 5"
+        val months = mapOf(
+            "january" to "01", "jan" to "01",
+            "february" to "02", "feb" to "02",
+            "march" to "03", "mar" to "03",
+            "april" to "04", "apr" to "04",
+            "may" to "05",
+            "june" to "06", "jun" to "06",
+            "july" to "07", "jul" to "07",
+            "august" to "08", "aug" to "08",
+            "september" to "09", "sep" to "09", "sept" to "09",
+            "october" to "10", "oct" to "10",
+            "november" to "11", "nov" to "11",
+            "december" to "12", "dec" to "12",
+        )
+        Regex("""^([A-Za-z]+)\s+(\d{1,2})(?:,?\s+(\d{4}))?$""").matchEntire(s)?.let { m ->
+            val (name, dd, yy) = m.destructured
+            val month = months[name.lowercase()] ?: return null
+            val day = dd.padStart(2, '0')
+            return if (yy.isNotEmpty()) "$yy-$month-$day" else "$month-$day"
+        }
+        return null
+    }
+
     companion object {
         private const val TAG = "Mythara/Remember"
+
+        /** The structured kinds the People + AboutMe UI knows how to
+         *  render distinctly. Anything else passes through as "fact". */
+        private val ALLOWED_KINDS = setOf(
+            "birthday",
+            "anniversary",
+            "preference",
+            "fact",
+            "contact-info",
+            "location",
+            "milestone",
+        )
     }
 }
