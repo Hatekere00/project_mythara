@@ -493,81 +493,98 @@ class ChatViewModel @Inject constructor(
 
     /**
      * Variant that handles chat-side image attachments (📎 button).
-     * Each URI is decoded, sent through [com.mythara.minimax.VisionService]
-     * for a short description, and the descriptions are merged into
-     * the user's text message before submission so the (text-only)
-     * agent model still "sees" what was attached.
+     * Each URI is:
+     *  - copied to `filesDir/chat-attachments/<uuid>.jpg` so the
+     *    agent can re-read the bytes via `read_file` later in the
+     *    turn (e.g. "extract the text from this", "what colour is
+     *    the third box?"). Without this, the agent would only see
+     *    the description; if it pattern-matched to
+     *    `read_recent_chat_image` it would get `no_image_found`
+     *    because picker URIs don't land in any chat-app MediaStore
+     *    bucket. The file lives in our private filesDir (allowed
+     *    root for [ReadFileTool]) so privacy stays intact.
+     *  - described via [com.mythara.minimax.VisionService] (Gemini
+     *    Flash by default) so the text-only agent model still "sees"
+     *    what was attached without paying the cost of a multimodal
+     *    request per turn.
      *
-     * Submission flow:
-     *   1. Show "thinking…" immediately (the same as plain submit) so
-     *      the UI doesn't sit idle while we describe.
-     *   2. Off-main: for each attachment, copy bytes to a temp file
-     *      and call vision.describeImage(). Concurrent across all
-     *      attachments to keep latency low (each round-trip is ~3 s
-     *      on Gemini Flash; 4 attachments would be 12 s sequentially
-     *      vs. ~4 s in parallel).
-     *   3. Build augmented text:
-     *        "<user typed>
+     * The augmented user message:
+     *   "<user typed text>
      *
-     *         [attachment 1] <description>
-     *         [attachment 2] <description>"
-     *      When the user typed nothing (image-only turn), fall back
-     *      to "What's in these images?" so the agent has a prompt.
-     *   4. Submit the augmented text via the runner.
+     *    [attachment 1] (file:///…/chat-attachments/…jpg) <description>
+     *    [attachment 2] (file:///…) <description>
+     *
+     *    (Use `read_file` on the paths above to re-inspect the
+     *     attached image bytes if needed. Do NOT call
+     *     `read_recent_chat_image` — those are picker
+     *     attachments, not chat-app images.)"
+     *
+     * The trailing hint keeps the agent from defaulting to
+     * `read_recent_chat_image` (which scans WhatsApp / SMS buckets)
+     * when it wants more pixels.
      */
     fun submitWithAttachments(text: String, uris: List<android.net.Uri>, fromVoice: Boolean) {
         if (uris.isEmpty()) return submit(text, fromVoice)
         _ui.update { it.copy(thinking = true, streaming = "", needsApiKey = false, errorBanner = null) }
         viewModelScope.launch {
-            val descriptions = withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val attached: List<Pair<String, String>> = withContext(kotlinx.coroutines.Dispatchers.IO) {
                 uris.map { uri ->
-                    async {
-                        runCatching { describeAttachment(uri) }
-                            .getOrElse { "couldn't describe (${it.message ?: it.javaClass.simpleName})" }
-                    }
+                    async { persistAndDescribe(uri) }
                 }.map { it.await() }
             }
-            val baseText = text.ifBlank { "What's in these image${if (uris.size == 1) "" else "s"}?" }
+            val baseText = text.ifBlank { "What's in this image${if (uris.size == 1) "" else "s"}?" }
             val merged = buildString {
                 append(baseText)
                 append("\n")
-                for ((i, desc) in descriptions.withIndex()) {
+                for ((i, a) in attached.withIndex()) {
+                    val (path, desc) = a
                     append("\n[attachment ")
                     append(i + 1)
-                    append("] ")
+                    append("] (file://").append(path).append(") ")
                     append(desc)
                 }
+                append("\n\n(The image bytes are saved at the file:// paths above. " +
+                    "Use `read_file` on those paths if you need to inspect the image further " +
+                    "— do NOT call `read_recent_chat_image`, those paths are user-picker " +
+                    "attachments not chat-app images.)")
             }
             runner.submit(merged, fromVoice = fromVoice)
         }
     }
 
-    /** Copy the picker URI's bytes to a temp file in cacheDir and
-     *  hand it to VisionService. Single sentence prompt — we just
-     *  need the agent to know WHAT it's looking at, not a paragraph. */
-    private suspend fun describeAttachment(uri: android.net.Uri): String {
-        val tempFile = java.io.File(
-            appCtx.cacheDir,
-            "attach_${System.currentTimeMillis()}_${kotlin.random.Random.nextInt()}.jpg",
+    /** Copy the picker URI to a persistent file inside our
+     *  ReadFileTool-allowed `filesDir/chat-attachments/` and run
+     *  the vision cascade for a short description. Returns the
+     *  saved absolute path + the description. */
+    private suspend fun persistAndDescribe(uri: android.net.Uri): Pair<String, String> {
+        val dir = java.io.File(appCtx.filesDir, "chat-attachments").apply { mkdirs() }
+        val savedFile = java.io.File(
+            dir,
+            "${java.util.UUID.randomUUID()}.jpg",
         )
-        appCtx.contentResolver.openInputStream(uri).use { input ->
-            if (input == null) return "couldn't read attachment"
-            tempFile.outputStream().use { output -> input.copyTo(output) }
+        val copyOk = runCatching {
+            appCtx.contentResolver.openInputStream(uri)?.use { input ->
+                savedFile.outputStream().use { output -> input.copyTo(output) }
+            } != null
+        }.getOrDefault(false)
+        if (!copyOk || savedFile.length() == 0L) {
+            return savedFile.absolutePath to "couldn't read attachment bytes"
         }
         return try {
             val outcome = vision.describeImage(
-                imageFile = tempFile,
+                imageFile = savedFile,
                 prompt = "Describe this image in 1-2 short sentences. " +
                     "Focus on what's visible (subject, scene, colours, any text). " +
                     "Don't speculate.",
             )
-            if (outcome.ok && outcome.text.isNotBlank()) {
+            val desc = if (outcome.ok && outcome.text.isNotBlank()) {
                 outcome.text.trim()
             } else {
                 "couldn't describe (${outcome.code ?: "empty"})"
             }
-        } finally {
-            runCatching { tempFile.delete() }
+            savedFile.absolutePath to desc
+        } catch (e: Throwable) {
+            savedFile.absolutePath to "describe threw: ${e.message ?: e.javaClass.simpleName}"
         }
     }
 
