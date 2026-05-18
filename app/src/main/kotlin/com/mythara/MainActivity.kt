@@ -213,6 +213,47 @@ class MainActivity : FragmentActivity() {
         // theme switch) doesn't re-trigger listen mode every time
         // the activity rebuilds.
         intent.action = Intent.ACTION_MAIN
+        // Lock-screen path — when the user tapped "Talk" / "Reply" on
+        // the QuickTalk or Reply notification while the device was
+        // locked, render this activity OVER the keyguard so they
+        // can complete the voice round-trip without unlocking. For
+        // SECURE keyguards (PIN/pattern/biometric set) the OS still
+        // gates access to sensitive surfaces, but our chat UI +
+        // mic + TTS run fine over the lock.
+        enableOverKeyguard()
         voiceActions.fire(source)
+    }
+
+    /** Pin the activity above the keyguard + flip the screen on so
+     *  voice-triggered launches from lock-screen notifications +
+     *  ASSIST gestures stay in-context. Idempotent — calling twice
+     *  is a no-op for the second call. The matching teardown lives
+     *  in [disableOverKeyguard] which fires once the auth manager
+     *  unlocks (or the user backgrounds the activity). */
+    private fun enableOverKeyguard() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                    android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
+            )
+        }
+        // Try to dismiss the (non-secure) keyguard so a quick swipe
+        // pattern doesn't break the agent flow. KeyguardManager
+        // ignores this on secure lock screens — the over-keyguard
+        // render is the fallback there.
+        val km = getSystemService(android.content.Context.KEYGUARD_SERVICE)
+            as? android.app.KeyguardManager
+        if (km?.isKeyguardLocked == true && android.os.Build.VERSION.SDK_INT >=
+            android.os.Build.VERSION_CODES.O
+        ) {
+            runCatching {
+                km.requestDismissKeyguard(this, null)
+            }
+        }
     }
 }

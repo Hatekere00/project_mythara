@@ -28,6 +28,20 @@
          access → Display over other apps. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <!-- Lock-screen interaction support.
+         TURN_SCREEN_ON: lets the agent wake the screen (e.g. when
+           it posts a Reply and the user has set Mythara to flash
+           the screen on for ongoing turns).
+         USE_FULL_SCREEN_INTENT: lets the agent post a
+           full-screen reply intent (incoming-call-style) when the
+           user has tapped "Talk" on lock-screen — keeps the UX
+           coherent over the keyguard without forcing an unlock.
+         DISABLE_KEYGUARD: deprecated but harmless; KeyguardManager
+           still respects it for non-secure keyguard dismissal. -->
+    <uses-permission android:name="android.permission.TURN_SCREEN_ON" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
+
     <!-- Meta DAT SDK — Bluetooth permissions required to connect to
          the Meta Display Glasses + neural band. BLUETOOTH_CONNECT is the
          Android 12+ runtime-granted permission for actively

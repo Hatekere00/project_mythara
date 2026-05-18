@@ -125,6 +125,12 @@ class QuickTalkNotification @Inject constructor(
             .setShowWhen(false)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            // Make sure the Talk + Reply actions are visible on
+            // the lock screen — without VISIBILITY_PUBLIC the
+            // "Sensitive notifications" setting can swap the body
+            // for a generic privacy placeholder, breaking the
+            // one-tap PTT-from-locked flow.
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .addAction(voiceAction)
             .addAction(replyAction)
             .extend(wearable)

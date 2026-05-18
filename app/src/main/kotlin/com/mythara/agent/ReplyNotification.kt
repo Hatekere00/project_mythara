@@ -156,6 +156,14 @@ class ReplyNotification @Inject constructor(
             // the answer") — silent dismissal isn't what they want.
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            // VISIBILITY_PUBLIC explicitly so the full reply text
+            // renders on the lock screen — without this, channels
+            // with default visibility can still hide the body on
+            // secure lock screens depending on the user's
+            // "Sensitive notifications" setting. Public is safe
+            // here because chat replies are the agent's response
+            // TO the user, not a third party's incoming message.
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setTimeoutAfter(AUTO_DISMISS_MS)
             .build()
         val nm = ctx.getSystemService(NotificationManager::class.java) ?: return

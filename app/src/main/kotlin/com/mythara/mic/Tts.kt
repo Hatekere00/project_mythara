@@ -62,16 +62,16 @@ class Tts @Inject constructor(
                 engine?.language = Locale.getDefault()
                 engine?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
-                        _speaking.value = true
+                        setSpeaking(true)
                     }
                     override fun onDone(utteranceId: String?) {
-                        _speaking.value = false
+                        setSpeaking(false)
                     }
                     @Deprecated("kept for API < 21") override fun onError(utteranceId: String?) {
-                        _speaking.value = false
+                        setSpeaking(false)
                     }
                     override fun onError(utteranceId: String?, errorCode: Int) {
-                        _speaking.value = false
+                        setSpeaking(false)
                     }
                 })
             }
@@ -185,8 +185,8 @@ class Tts @Inject constructor(
         return supertonic.speak(
             text = text,
             voice = voice,
-            onStart = { _speaking.value = true },
-            onDone = { _speaking.value = false },
+            onStart = { setSpeaking(true) },
+            onDone = { setSpeaking(false) },
         )
     }
 
@@ -200,8 +200,8 @@ class Tts @Inject constructor(
         val ok = supertonic.speak(
             text = cleaned,
             voice = voice,
-            onStart = { _speaking.value = true },
-            onDone = { _speaking.value = false },
+            onStart = { setSpeaking(true) },
+            onDone = { setSpeaking(false) },
         )
         if (!ok) {
             android.util.Log.w("Mythara/Tts", "Supertonic synthesis failed; falling back to Android TTS")
@@ -239,8 +239,8 @@ class Tts @Inject constructor(
             apiKey = apiKey,
             voiceId = voiceId,
             userMoodTrend = userMoodTrend,
-            onStart = { _speaking.value = true },
-            onDone = { _speaking.value = false },
+            onStart = { setSpeaking(true) },
+            onDone = { setSpeaking(false) },
         )
         if (!outcome.ok) {
             // Fallback: synthesize via Android TTS so the user still
@@ -285,7 +285,7 @@ class Tts @Inject constructor(
         engine?.stop()
         elevenLabs.stop()
         runCatching { supertonic.stop() }
-        _speaking.value = false
+        setSpeaking(false)
     }
 
     fun shutdown() {
@@ -294,7 +294,69 @@ class Tts @Inject constructor(
         ready = false
         elevenLabs.stop()
         runCatching { supertonic.release() }
-        _speaking.value = false
+        setSpeaking(false)
+    }
+
+    // ──────────────────────────── speaking state + audio focus ─────
+    // Centralised flip for the speaking StateFlow. Wraps every
+    // engine's "I just started/finished speaking" callback so we
+    // can grab + release transient audio focus uniformly — that
+    // makes other apps (Spotify, Maps voice, calls) duck or pause
+    // for the duration of an agent reply and resume cleanly after,
+    // and ensures the user can hear the agent's voice over the
+    // lock screen even when something else was playing first.
+    @Volatile private var audioFocusRequest: android.media.AudioFocusRequest? = null
+    private val audioFocusListener = android.media.AudioManager.OnAudioFocusChangeListener {
+        // We don't pause on FOCUS_LOSS — TTS chunks are short enough
+        // that letting the engine finish is the right UX. Other
+        // apps will see our request via STREAM_MUSIC routing.
+    }
+
+    private fun setSpeaking(active: Boolean) {
+        val was = _speaking.value
+        _speaking.value = active
+        if (active && !was) requestAudioFocus()
+        if (!active && was) abandonAudioFocus()
+    }
+
+    private fun requestAudioFocus() {
+        runCatching {
+            val am = ctx.getSystemService(android.media.AudioManager::class.java) ?: return
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                val attrs = android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_ASSISTANT)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+                val req = android.media.AudioFocusRequest
+                    .Builder(android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                    .setAudioAttributes(attrs)
+                    .setOnAudioFocusChangeListener(audioFocusListener)
+                    .setWillPauseWhenDucked(false)
+                    .build()
+                audioFocusRequest = req
+                am.requestAudioFocus(req)
+            } else {
+                @Suppress("DEPRECATION")
+                am.requestAudioFocus(
+                    audioFocusListener,
+                    android.media.AudioManager.STREAM_MUSIC,
+                    android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
+                )
+            }
+        }
+    }
+
+    private fun abandonAudioFocus() {
+        runCatching {
+            val am = ctx.getSystemService(android.media.AudioManager::class.java) ?: return
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                audioFocusRequest?.let { am.abandonAudioFocusRequest(it) }
+                audioFocusRequest = null
+            } else {
+                @Suppress("DEPRECATION")
+                am.abandonAudioFocus(audioFocusListener)
+            }
+        }
     }
 
     companion object {
