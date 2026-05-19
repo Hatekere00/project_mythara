@@ -57,10 +57,11 @@ class RenderCanvasTool @Inject constructor(
             "with Tailwind v3 + DaisyUI + the Mythara theme (data-theme='mythara'), so the " +
             "agent writes ONLY body content using Tailwind utility classes + DaisyUI " +
             "components (`btn`, `card`, `badge`, `stat`, `alert`, `chat`, etc.). " +
-            "Use template='preact-tailwind' for interactive renders that need state " +
-            "(JSX-shaped via the `html\\`...\\`` template literal). Use template='blank' " +
-            "only when you need to emit a complete custom <html> document. All assets " +
-            "are bundled — no CDN fetches at render time."
+            "Templates: 'tailwind' (default), 'preact-tailwind' (adds Preact + HTM for " +
+            "interactive state via the `html\\`...\\`` template literal), 'webgl' (adds " +
+            "Three.js r147 for 3D / shader playgrounds — use `mythara.three.boot('#stage')` " +
+            "boilerplate-free), 'webgl-preact' (everything). 'blank' for custom <html>. " +
+            "All assets are bundled — no CDN fetches at render time."
 
     override val parameters = buildJsonObject {
         put("type", "object")
@@ -77,8 +78,10 @@ class RenderCanvasTool @Inject constructor(
                 put("type", "string")
                 put(
                     "description",
-                    "'tailwind' (default) | 'preact-tailwind' | 'blank'. " +
-                        "Tailwind/Preact bundle is pre-loaded offline.",
+                    "'tailwind' (default, ~580 KB Tailwind+DaisyUI) | 'preact-tailwind' " +
+                        "(+~18 KB Preact+HTM for state) | 'webgl' (+~600 KB Three.js r147 " +
+                        "as window.THREE + mythara.three.boot helper) | 'webgl-preact' " +
+                        "(everything) | 'blank' (no wrapper). All assets bundled offline.",
                 )
             })
             put("mode", buildJsonObject {
@@ -107,9 +110,13 @@ class RenderCanvasTool @Inject constructor(
 
         val wrapped = when (template) {
             "blank" -> rawHtml
-            "tailwind" -> wrapTailwind(rawHtml, withPreact = false)
-            "preact-tailwind" -> wrapTailwind(rawHtml, withPreact = true)
-            else -> return ToolResult.fail("template must be 'tailwind' | 'preact-tailwind' | 'blank'")
+            "tailwind" -> wrapTailwind(rawHtml, withPreact = false, withThree = false)
+            "preact-tailwind" -> wrapTailwind(rawHtml, withPreact = true, withThree = false)
+            "webgl" -> wrapTailwind(rawHtml, withPreact = false, withThree = true)
+            "webgl-preact" -> wrapTailwind(rawHtml, withPreact = true, withThree = true)
+            else -> return ToolResult.fail(
+                "template must be 'tailwind' | 'preact-tailwind' | 'webgl' | 'webgl-preact' | 'blank'",
+            )
         }
 
         return when (mode) {
@@ -149,8 +156,11 @@ class RenderCanvasTool @Inject constructor(
     /** Compose a full HTML document around the agent's body content.
      *  Loads the bundled Tailwind Play CDN + DaisyUI styled core +
      *  the Mythara theme overlay. Optionally adds Preact + HTM for
-     *  interactive components. */
-    private fun wrapTailwind(body: String, withPreact: Boolean): String = buildString {
+     *  interactive components. Optionally adds Three.js r147 (UMD,
+     *  ~594 KB) for WebGL / shader playgrounds — bound to a single
+     *  global `THREE` so the agent's body script can do
+     *  `new THREE.Scene()` directly. */
+    private fun wrapTailwind(body: String, withPreact: Boolean, withThree: Boolean): String = buildString {
         append("""<!doctype html>
 <html lang="en" data-theme="mythara">
 <head>
@@ -217,6 +227,62 @@ class RenderCanvasTool @Inject constructor(
       useReducer: preactHooks.useReducer,
       useRef: preactHooks.useRef,
     });
+  </script>
+""")
+        }
+        if (withThree) {
+            // Three.js r147 (last UMD release) loads as a window
+            // global. The agent can `new THREE.Scene()`, build
+            // geometries / materials / lights, and render via
+            // `THREE.WebGLRenderer`. ShaderMaterial covers the
+            // shader-playground use case (vertex + fragment GLSL
+            // inline). For Mythara's dark canvas we pre-set
+            // `renderer.setClearColor(0x1B1A22)` if the agent's
+            // script doesn't override it (helper exposed on
+            // `window.mythara.three.boot(canvas)` below).
+            append("""  <script src="three.min.js"></script>
+  <script>
+    // Tiny boot helper so the agent doesn't have to retype the
+    // boilerplate every time. Usage from the body script:
+    //   const { scene, camera, renderer } = mythara.three.boot('#stage');
+    //   scene.add(new THREE.Mesh(geom, mat));
+    //   renderer.setAnimationLoop(() => renderer.render(scene, camera));
+    window.mythara = window.mythara || {};
+    window.mythara.three = {
+      boot(selector, opts = {}) {
+        const host = typeof selector === 'string'
+          ? document.querySelector(selector)
+          : selector;
+        if (!host) throw new Error('mythara.three.boot: host not found: ' + selector);
+        const w = opts.width  ?? host.clientWidth  ?? window.innerWidth;
+        const h = opts.height ?? host.clientHeight ?? window.innerHeight;
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(opts.bg ?? 0x1B1A22);
+        const camera = new THREE.PerspectiveCamera(
+          opts.fov ?? 60, w / h, opts.near ?? 0.1, opts.far ?? 1000,
+        );
+        camera.position.set(...(opts.cameraPos ?? [0, 0, 5]));
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+        renderer.setPixelRatio(window.devicePixelRatio || 1);
+        renderer.setSize(w, h, false);
+        renderer.setClearColor(opts.bg ?? 0x1B1A22);
+        host.appendChild(renderer.domElement);
+        // Resize on viewport changes.
+        const onResize = () => {
+          const nw = host.clientWidth || window.innerWidth;
+          const nh = host.clientHeight || window.innerHeight;
+          camera.aspect = nw / nh;
+          camera.updateProjectionMatrix();
+          renderer.setSize(nw, nh, false);
+        };
+        window.addEventListener('resize', onResize);
+        return { scene, camera, renderer, dispose() {
+          window.removeEventListener('resize', onResize);
+          renderer.dispose();
+          renderer.domElement.remove();
+        }};
+      },
+    };
   </script>
 """)
         }
