@@ -66,6 +66,7 @@ class SecretSettingsViewModel @Inject constructor(
     private val recaptionAllRunner: com.mythara.lifeline.RecaptionAllRunner,
     private val memoryReorganizerRunner: com.mythara.memory.MemoryReorganizerRunner,
     private val peopleCleanupRunner: com.mythara.analytics.PeopleCleanupRunner,
+    private val predicateNormalizationRunner: com.mythara.memory.graph.PredicateNormalizationRunner,
 ) : ViewModel() {
 
     /** State of the bulk "classify every contact + hide non-people"
@@ -76,6 +77,17 @@ class SecretSettingsViewModel @Inject constructor(
     fun startPeopleCleanup() = peopleCleanupRunner.start()
     fun cancelPeopleCleanup() = peopleCleanupRunner.cancel()
     fun acknowledgePeopleCleanup() = peopleCleanupRunner.acknowledge()
+
+    /** Backfill state for the one-shot "rewrite freeform predicates
+     *  into the canonical vocabulary" pass. Drives the Settings
+     *  panel below the people-cleanup card. */
+    val predicateNormalizationState: StateFlow<
+        com.mythara.memory.graph.PredicateNormalizationRunner.State,
+    > get() = predicateNormalizationRunner.state
+
+    fun startPredicateNormalization() = predicateNormalizationRunner.start()
+    fun cancelPredicateNormalization() = predicateNormalizationRunner.cancel()
+    fun acknowledgePredicateNormalization() = predicateNormalizationRunner.acknowledge()
 
     /** State of the bulk "reorganize memory" pass — drives the
      *  Settings panel's button + progress / done card. */

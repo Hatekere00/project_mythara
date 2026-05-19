@@ -182,6 +182,29 @@ interface GraphMemoryDao {
     @Query("SELECT * FROM graph_edges WHERE synced = 0 ORDER BY createdAtMs ASC LIMIT :limit")
     suspend fun unsyncedEdges(limit: Int = 500): List<GraphEdge>
 
+    /** Every edge on this device, newest first. Used by the
+     *  PredicateNormalizationRunner to walk the whole table in one
+     *  pass. Capped at a generous ceiling to bound the per-pass
+     *  memory footprint — if a user has >50k edges (extremely
+     *  unlikely for a personal graph) the runner reports a warning
+     *  and the user can re-run after the upper rows finish. */
+    @Query("SELECT * FROM graph_edges ORDER BY createdAtMs DESC LIMIT :limit")
+    suspend fun listAllEdges(limit: Int = 50_000): List<GraphEdge>
+
+    /** Atomic predicate rewrite — delete the old row by id, insert
+     *  the new one with its newly-derived id. Used by
+     *  PredicateNormalizationRunner because the primary key is a
+     *  hash of subject+predicate+object+validAt, so a predicate
+     *  change forces a new id. */
+    @androidx.room.Transaction
+    suspend fun replaceEdge(oldId: String, newEdge: GraphEdge) {
+        deleteEdge(oldId)
+        upsertEdge(newEdge)
+    }
+
+    @Query("DELETE FROM graph_edges WHERE id = :id")
+    suspend fun deleteEdge(id: String)
+
     @Query("UPDATE graph_edges SET synced = 1 WHERE id = :id")
     suspend fun markEdgeSynced(id: String)
 

@@ -1003,6 +1003,10 @@ fun SecretSettingsScreen(
 
         Spacer(Modifier.height(14.dp))
 
+        PredicateNormalizationPanel(vm = vm)
+
+        Spacer(Modifier.height(14.dp))
+
         Panel("danger zone") {
             Text(
                 text = "forget everything wipes Observe scratch + the learning journal. " +
@@ -1579,6 +1583,119 @@ private fun PeopleCleanupPanel(vm: SecretSettingsViewModel) {
                     }
                     Spacer(Modifier.size(8.dp))
                     TextButton(onClick = { vm.startPeopleCleanup() }) {
+                        Text("${Glyph.Arrow} retry", color = MytharaColors.Charple)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * "Normalize graph predicates" — one-shot backfill that rewrites
+ * every graph edge's free-form predicate into the canonical
+ * vocabulary defined in [com.mythara.memory.graph.PredicateVocabulary].
+ * Same Idle / Running / Done / Failed shape as the other runner
+ * panels above. Top-unmapped predicates surface in the Done report
+ * so the user can see what vocabulary additions might help.
+ */
+@Composable
+private fun PredicateNormalizationPanel(vm: SecretSettingsViewModel) {
+    val state by vm.predicateNormalizationState.collectAsState()
+    Panel("normalize graph predicates") {
+        when (val s = state) {
+            is com.mythara.memory.graph.PredicateNormalizationRunner.State.Idle -> {
+                Text(
+                    text = "Walks every edge in the relationship graph and rewrites free-form " +
+                        "predicates into the canonical vocabulary (likes / works_at / lives_in / " +
+                        "married_to / …). New extractions are already normalised; this pass " +
+                        "fixes everything from before the vocabulary shipped. Idempotent — re-run " +
+                        "any time, canonical edges are skipped.",
+                    color = MytharaColors.FgDim,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(10.dp))
+                Button(
+                    onClick = { vm.startPredicateNormalization() },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MytharaColors.Charple, contentColor = MytharaColors.Fg,
+                    ),
+                ) { Text("${Glyph.Arrow} normalize predicates") }
+            }
+            is com.mythara.memory.graph.PredicateNormalizationRunner.State.Running -> {
+                val frac = if (s.total > 0) s.attempted / s.total.toFloat() else 0f
+                Text(
+                    text = "${Glyph.Ellipsis} rewriting ${s.attempted} of ${s.total} · " +
+                        "${s.normalized} normalized",
+                    color = MytharaColors.Citron,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = { frac.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MytharaColors.Charple,
+                    trackColor = MytharaColors.SurfaceHigh,
+                )
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = { vm.cancelPredicateNormalization() }) {
+                    Text("${Glyph.Cross} cancel", color = MytharaColors.Sriracha)
+                }
+            }
+            is com.mythara.memory.graph.PredicateNormalizationRunner.State.Done -> {
+                val r = s.report
+                Text(
+                    text = "${Glyph.Check} processed ${r.totalScanned} edges in " +
+                        "${"%.1f".format(r.durationMs / 1000.0)} s",
+                    color = MytharaColors.Julep,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "${Glyph.AccentBar} ${r.normalized} rewritten · ${r.alreadyCanonical} " +
+                        "already canonical · ${r.unmapped} unmapped (vocabulary doesn't cover)",
+                    color = MytharaColors.FgDim,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                if (r.topUnmapped.isNotEmpty()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "${Glyph.AccentBar} most-common unmapped: " +
+                            r.topUnmapped.joinToString(", ") { (p, n) -> "$p ($n)" },
+                        color = MytharaColors.FgDim,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "${Glyph.AccentBar} synced to your other Mythara devices.",
+                    color = MytharaColors.FgDim,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(8.dp))
+                Row {
+                    TextButton(onClick = { vm.acknowledgePredicateNormalization() }) {
+                        Text("dismiss", color = MytharaColors.FgMute)
+                    }
+                    Spacer(Modifier.size(8.dp))
+                    TextButton(onClick = { vm.startPredicateNormalization() }) {
+                        Text("${Glyph.Arrow} run again", color = MytharaColors.Charple)
+                    }
+                }
+            }
+            is com.mythara.memory.graph.PredicateNormalizationRunner.State.Failed -> {
+                Text(
+                    text = "${Glyph.Cross} ${s.message}",
+                    color = MytharaColors.Sriracha,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(8.dp))
+                Row {
+                    TextButton(onClick = { vm.acknowledgePredicateNormalization() }) {
+                        Text("dismiss", color = MytharaColors.FgMute)
+                    }
+                    Spacer(Modifier.size(8.dp))
+                    TextButton(onClick = { vm.startPredicateNormalization() }) {
                         Text("${Glyph.Arrow} retry", color = MytharaColors.Charple)
                     }
                 }

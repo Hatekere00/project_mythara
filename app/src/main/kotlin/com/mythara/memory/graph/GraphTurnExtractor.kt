@@ -190,7 +190,15 @@ class GraphTurnExtractor @Inject constructor(
             runCatching {
                 val o = el.jsonObject
                 val s = o["subject"]?.jsonPrimitive?.contentOrNull?.trim() ?: return@mapNotNull null
-                val p = o["predicate"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase() ?: return@mapNotNull null
+                val rawPred = o["predicate"]?.jsonPrimitive?.contentOrNull?.trim()
+                    ?: return@mapNotNull null
+                // Canonicalize the predicate against the controlled
+                // vocabulary at write time so the graph stays clean
+                // going forward. The backfill runner handles old
+                // rows. Non-vocab predicates fall through unchanged
+                // (cleaned form) — we keep the fact rather than drop
+                // it just because the LLM coined a new term.
+                val p = PredicateVocabulary.normalize(rawPred)
                 val obj = o["object"]?.jsonPrimitive?.contentOrNull?.trim() ?: return@mapNotNull null
                 val fact = o["fact"]?.jsonPrimitive?.contentOrNull?.trim()?.take(200)
                 if (s.isBlank() || p.isBlank() || obj.isBlank()) null
