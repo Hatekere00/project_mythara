@@ -273,7 +273,7 @@ fun MytharaRoot(
                         // mirror their forward counterparts.
                         NavHost(
                             navController = nav,
-                            startDestination = Routes.Chat,
+                            startDestination = Routes.Home,
                             enterTransition = {
                                 val target = targetState.destination.route.orEmpty()
                                 when (com.mythara.ui.scaffold.TransitionFamily.forRoute(target)) {
@@ -297,6 +297,23 @@ fun MytharaRoot(
                                 }.invoke(this)
                             },
                         ) {
+                            // v6 — home hub is the landing surface.
+                            composable(Routes.Home) {
+                                com.mythara.ui.scaffold.MytharaScaffold(
+                                    title = null,
+                                    glyph = null,
+                                    edgeGlow = null,
+                                ) {
+                                    com.mythara.ui.home.HomeHubScreen(
+                                        onOpenChat = { nav.navigate(Routes.Chat) { launchSingleTop = true } },
+                                        onOpenPeople = { nav.navigate(Routes.People) { launchSingleTop = true } },
+                                        onOpenTasks = { nav.navigate(Routes.Tasks) { launchSingleTop = true } },
+                                        onOpenMemory = { nav.navigate(Routes.Memory) { launchSingleTop = true } },
+                                        onOpenInsights = { nav.navigate(Routes.Insights) { launchSingleTop = true } },
+                                        onOpenAboutMe = { nav.navigate(Routes.AboutMe) { launchSingleTop = true } },
+                                    )
+                                }
+                            }
                             composable(Routes.Chat) {
                                 // Phase B — Chat adopts MytharaScaffold
                                 // as a pure architectural wrap. No title
@@ -569,7 +586,7 @@ fun MytharaRoot(
                                             // the amulet's spotlight
                                             // sentinel can fire from a
                                             // clean state.
-                                            nav.popBackStack(Routes.Chat, inclusive = false)
+                                            nav.popBackStack(Routes.Home, inclusive = false)
                                         },
                                     )
                                 }
@@ -711,9 +728,10 @@ fun MytharaRoot(
                     // visual precedence when active.
                     com.mythara.ui.system.MytharaSpine(
                         onRoseTap = {
-                            nav.navigate(Routes.Chat) {
+                            // Rose center-tap = "home" → the hub.
+                            nav.navigate(Routes.Home) {
                                 launchSingleTop = true
-                                popUpTo(Routes.Chat) { inclusive = false }
+                                popUpTo(Routes.Home) { inclusive = false }
                             }
                         },
                         onOpenAboutMe = { nav.navigate(Routes.AboutMe) { launchSingleTop = true } },
@@ -823,6 +841,7 @@ private const val ROUTE_SPOTLIGHT = "__overlay_spotlight"
  * the gesture too much.
  */
 private val PrimaryStepOrder = listOf(
+    Routes.Home,
     Routes.Chat,
     Routes.Insights,
     Routes.Face,
@@ -834,8 +853,8 @@ private fun stepPrimary(current: String?, forward: Boolean): String? {
     val idx = PrimaryStepOrder.indexOf(current)
     if (idx < 0) {
         // Caller is on a secondary screen (Settings / Permissions /
-        // etc.) — a swipe pulls us back to Chat as the anchor.
-        return Routes.Chat
+        // etc.) — a swipe pulls us back to Home as the anchor.
+        return Routes.Home
     }
     val n = PrimaryStepOrder.size
     val nextIdx = if (forward) (idx + 1) % n else (idx - 1 + n) % n
@@ -843,6 +862,9 @@ private fun stepPrimary(current: String?, forward: Boolean): String? {
 }
 
 object Routes {
+    /** v6 — the home-hub landing surface (live tiles). Start
+     *  destination; Chat is now one tile, not the root. */
+    const val Home = "home"
     const val Chat = "chat"
     const val Settings = "settings"
     const val About = "about"

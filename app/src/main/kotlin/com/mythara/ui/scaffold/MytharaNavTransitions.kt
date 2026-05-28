@@ -95,7 +95,8 @@ enum class TransitionFamily {
          *  immediately. */
         fun forRoute(route: String): TransitionFamily = when (route) {
             // Peer surfaces accessible via swipe-left/right on the rose.
-            "chat", "insights", "face", "people" -> Sibling
+            // Home is the landing hub + the swipe anchor.
+            "home", "chat", "insights", "face", "people" -> Sibling
             // Drill-into surfaces — settings + content body screens.
             "settings", "aboutMe", "memory", "tasks", "notes",
             "musicVocab", "permissions", "audit", "usage", "dashboard",

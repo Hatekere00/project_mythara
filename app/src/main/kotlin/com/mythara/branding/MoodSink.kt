@@ -26,10 +26,17 @@ object MoodSink {
     @Volatile private var label: String? = null
     @Volatile private var ts: Long = 0L
 
+    /** Observable mirror of [label] so the home-hub mood tile (and any
+     *  future reactive UI) can render the live mood without polling.
+     *  Emits the lowercase label or null when cleared. */
+    private val _moodFlow = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    val moodFlow: kotlinx.coroutines.flow.StateFlow<String?> = _moodFlow
+
     fun update(mood: String?) {
         if (mood.isNullOrBlank()) return
         label = mood.lowercase()
         ts = System.currentTimeMillis()
+        _moodFlow.value = label
     }
 
     fun current(maxStaleMs: Long = STALE_AFTER_MS): String? {
