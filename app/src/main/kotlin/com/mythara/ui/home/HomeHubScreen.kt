@@ -575,16 +575,23 @@ private fun CaptionRow(glyph: String, glyphColor: Color, speaker: String, text: 
 /**
  * The ♪ tone chip + flash-message overlay on Home.
  *
- * Tap the ♪ chip → Mythara plays a short frequency sequence derived
- * from the current shape's family + mood (via
- * [com.mythara.face.ShapeToneSynthesizer]) AND surfaces a calm
- * one-line observation about the user — generated from the live
- * [com.mythara.face.LivingShapeEngine] state + recent
- * [com.mythara.face.MoodHistoryStore] data.
+ * The chip is a **toggle**, not a tap-to-fire:
  *
- * The observation **flashes for ~5 seconds and dismisses itself** —
- * it is DISPLAY-ONLY (never spoken via TTS). Mythara is reflecting
- * back to you in writing, gently.
+ *   - **OFF (outlined)** — silent. Tap → switches ON.
+ *   - **ON (filled charple)** — Mythara plays the current shape's
+ *     tone pattern (via [com.mythara.face.ShapeToneSynthesizer]) on
+ *     a continuous loop. Each loop iteration re-reads the live
+ *     [com.mythara.face.LivingShapeEngine] state so the tones
+ *     **evolve as the shape evolves**. Tap → switches OFF.
+ *
+ * Whenever the toggle is flipped ON, AND whenever the shape mutates
+ * mid-loop (family or seed change because the mood shifted), a fresh
+ * **AI-generated** observation is requested from
+ * [com.mythara.face.ShapeObservation] — focused on the user's
+ * evolution — and flashed below the chip for ~5 s.
+ *
+ * Lines are **display-only** (never spoken via TTS). Mythara is
+ * reflecting back to you in writing, gently.
  */
 @Composable
 private fun ShapeToneRow(modifier: Modifier = Modifier) {
@@ -600,8 +607,47 @@ private fun ShapeToneRow(modifier: Modifier = Modifier) {
     val observation = remember { entry.shapeObservation() }
 
     val living by livingShapeEngine.state.collectAsState()
-    var flash by remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var toneOn by remember { mutableStateOf(false) }
+    var flash by remember { mutableStateOf<String?>(null) }
+
+    // Continuous loop while tone is ON.
+    //
+    // Re-reads `livingShapeEngine.state.value` at the top of every
+    // iteration so a mid-session mood→shape morph immediately changes
+    // the next tone pattern — the audible voice tracks the visual.
+    //
+    // The synth returns the audible duration (notes × NOTE_DURATION
+    // + gaps × INTER_MOTIF_GAP). We wait that long + a small breath
+    // (~600 ms) before the next iteration so the listener has a
+    // sliver of silence between loops.
+    LaunchedEffect(toneOn) {
+        if (!toneOn) {
+            toneSynth.stop()
+            return@LaunchedEffect
+        }
+        while (true) {
+            val current = livingShapeEngine.state.value
+            val durMs = runCatching { toneSynth.play(current) }.getOrDefault(3_000L)
+            kotlinx.coroutines.delay(durMs + 600L)
+        }
+    }
+
+    // Fresh AI observation whenever (a) the user turns the tone ON,
+    // or (b) the shape's family / seed changes while ON.
+    LaunchedEffect(toneOn, living.family, living.seed) {
+        if (!toneOn) return@LaunchedEffect
+        val msg = runCatching { observation.generate(living) }
+            .getOrDefault("this shape is yours.")
+        flash = msg
+        kotlinx.coroutines.delay(4_400L)
+        flash = null
+    }
+
+    // Stop the tone if the composable leaves composition (user
+    // navigates away).
+    DisposableEffect(Unit) {
+        onDispose { toneSynth.stop() }
+    }
 
     Column(
         modifier = modifier,
@@ -633,33 +679,24 @@ private fun ShapeToneRow(modifier: Modifier = Modifier) {
                 )
             }
         }
-        // ♪ tone chip — small, brand accent, taps trigger tone + flash.
+        // ♪ tone chip — toggle. Filled charple when ON, outlined when OFF.
+        val bgAlpha = if (toneOn) 0.55f else 0.20f
+        val borderAlpha = if (toneOn) 0.90f else 0.50f
+        val glyphColor =
+            if (toneOn) MytharaColors.Bg else MytharaColors.Charple
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(20.dp))
-                .background(MytharaColors.Charple.copy(alpha = 0.20f))
-                .border(1.dp, MytharaColors.Charple.copy(alpha = 0.50f), RoundedCornerShape(20.dp))
+                .background(MytharaColors.Charple.copy(alpha = bgAlpha))
+                .border(1.dp, MytharaColors.Charple.copy(alpha = borderAlpha), RoundedCornerShape(20.dp))
                 .clickable {
-                    // Fire and forget — both calls are cheap; the
-                    // tone synth queues into MusicToneEngine which
-                    // cancels any in-flight tone.
-                    toneSynth.play(living)
-                    scope.launch {
-                        val msg = runCatching { observation.generate(living) }
-                            .getOrDefault("this shape is yours.")
-                        flash = msg
-                        // Total visible time: 0.4 fade-in + 4 hold +
-                        // 0.8 fade-out = ~5.2 s. After dismiss the
-                        // AnimatedVisibility's exit handles the fade.
-                        kotlinx.coroutines.delay(4_400L)
-                        flash = null
-                    }
+                    toneOn = !toneOn
                 }
                 .padding(horizontal = 18.dp, vertical = 10.dp),
         ) {
             Text(
                 text = "♪",
-                color = MytharaColors.Charple,
+                color = glyphColor,
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
             )
         }

@@ -5,6 +5,14 @@ import com.mythara.music.MusicToneEngine
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/** Per-note timing of MusicToneEngine, exposed here so the
+ *  continuous-tone loop on Home can pace itself without polling the
+ *  AudioTrack. Each note is wrapped in its own Motif by [play] so
+ *  total = pattern.size × NOTE_DURATION_MS + (pattern.size - 1) ×
+ *  INTER_MOTIF_GAP_MS. */
+private const val NOTE_DURATION_MS = 380
+private const val INTER_MOTIF_GAP_MS = 500
+
 /**
  * Maps the current [LivingShapeEngine.LivingShape] to a short
  * frequency sequence and plays it through [MusicToneEngine].
@@ -24,8 +32,9 @@ class ShapeToneSynthesizer @Inject constructor(
 ) {
 
     /** Play the current shape's tone sequence. Idempotent; tapping
-     *  twice in quick succession just replays. */
-    fun play(state: LivingShapeEngine.LivingShape) {
+     *  twice in quick succession just replays. Returns the estimated
+     *  duration in ms so a continuous-tone loop can pace itself. */
+    fun play(state: LivingShapeEngine.LivingShape): Long {
         val rootHz = rootForMood(state.mood)
         val pattern = patternForFamily(state.family, rootHz)
         // Wrap each note in its own Motif so MusicToneEngine spaces
@@ -34,6 +43,23 @@ class ShapeToneSynthesizer @Inject constructor(
         // which feels rushed for this voice.
         val motifs = pattern.map { hz -> Motif(notes = listOf(hz)) }
         toneEngine.play(motifs, sourceKey = "shape-tone")
+        return estimateDurationMs(pattern.size)
+    }
+
+    /** Hard-stop any in-flight tone. The continuous-tone toggle on
+     *  Home calls this when the user turns the chip OFF. */
+    fun stop() {
+        toneEngine.stop()
+    }
+
+    /** Total audible duration for a shape's pattern. Pattern.size
+     *  notes, each in its own Motif, separated by INTER_MOTIF_GAP_MS
+     *  silences. */
+    private fun estimateDurationMs(noteCount: Int): Long {
+        if (noteCount <= 0) return 0L
+        val notes = noteCount.toLong() * NOTE_DURATION_MS
+        val gaps = (noteCount - 1).coerceAtLeast(0).toLong() * INTER_MOTIF_GAP_MS
+        return notes + gaps
     }
 
     /** Mood → root pitch in Hz, drawn from the OM harmonic series so
