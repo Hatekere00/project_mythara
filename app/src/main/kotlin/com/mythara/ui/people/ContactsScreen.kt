@@ -157,10 +157,12 @@ class ContactsViewModel @Inject constructor(
  * Contacts-style People screen (v7 P4). Reads the full system address
  * book via [SystemContactsRepository] and surfaces three sections —
  * favourites, frequently contacted, and all (A–Z) — with a top search
- * bar and per-contact direct call / SMS / WhatsApp actions.
+ * bar. Tap a row → [onOpenContact] navigates to the per-contact detail
+ * screen (interactions, memory, Big Five, action chips).
  */
 @Composable
 fun ContactsScreen(
+    onOpenContact: (nameKey: String) -> Unit = {},
     vm: ContactsViewModel = hiltViewModel(),
 ) {
     val ctx = LocalContext.current
@@ -230,15 +232,15 @@ fun ContactsScreen(
             // animated reorder.
             if (sections.favorites.isNotEmpty()) {
                 item("h:favs") { SectionHeader("◆ favourites") }
-                items(sections.favorites) { c -> ContactRow(c = c, ctx = ctx) }
+                items(sections.favorites) { c -> ContactRow(c = c, onOpen = onOpenContact) }
             }
             if (sections.frequent.isNotEmpty()) {
                 item("h:freq") { SectionHeader("● frequently contacted") }
-                items(sections.frequent) { c -> ContactRow(c = c, ctx = ctx) }
+                items(sections.frequent) { c -> ContactRow(c = c, onOpen = onOpenContact) }
             }
             if (sections.all.isNotEmpty()) {
                 item("h:all") { SectionHeader("◇ all contacts") }
-                items(sections.all) { c -> ContactRow(c = c, ctx = ctx) }
+                items(sections.all) { c -> ContactRow(c = c, onOpen = onOpenContact) }
             }
             if (sections.favorites.isEmpty() && sections.frequent.isEmpty() && sections.all.isEmpty()) {
                 item("empty") {
@@ -315,16 +317,16 @@ private fun SearchBar(
 }
 
 @Composable
-private fun ContactRow(c: MergedContact, ctx: android.content.Context) {
-    var expanded by remember { mutableStateOf(false) }
+private fun ContactRow(c: MergedContact, onOpen: (nameKey: String) -> Unit) {
     val shape = RoundedCornerShape(12.dp)
+    val nameKey = c.displayName.lowercase().trim()
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 3.dp)
             .clip(shape)
             .background(MytharaColors.Surface.copy(alpha = 0.55f))
-            .clickable { expanded = !expanded }
+            .clickable { onOpen(nameKey) }
             .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -357,6 +359,12 @@ private fun ContactRow(c: MergedContact, ctx: android.content.Context) {
                                 .padding(horizontal = 5.dp, vertical = 1.dp),
                         )
                     }
+                    androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+                    Text(
+                        text = "${Glyph.Arrow}",
+                        color = MytharaColors.FgDim,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
                 }
                 c.primaryPhone?.let {
                     Text(
@@ -364,33 +372,6 @@ private fun ContactRow(c: MergedContact, ctx: android.content.Context) {
                         color = MytharaColors.FgDim,
                         style = MaterialTheme.typography.labelSmall,
                     )
-                }
-            }
-        }
-        if (expanded) {
-            Spacer(Modifier.height(10.dp))
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(start = 56.dp),
-            ) {
-                c.primaryPhone?.let { num ->
-                    ContactActionChip(
-                        label = "📞 call",
-                        color = MytharaColors.Bok,
-                        onTap = { ContactActions.phoneCall(ctx, num) },
-                    )
-                    ContactActionChip(
-                        label = "✉ sms",
-                        color = MytharaColors.Malibu,
-                        onTap = { ContactActions.sms(ctx, num) },
-                    )
-                    if (c.hasWhatsApp) {
-                        ContactActionChip(
-                            label = "wa chat",
-                            color = MytharaColors.Charple,
-                            onTap = { ContactActions.whatsAppChat(ctx, num) },
-                        )
-                    }
                 }
             }
         }

@@ -435,7 +435,33 @@ fun MytharaRoot(
                                     glyph = com.mythara.ui.theme.Glyph.DiamondFilled,
                                     onBack = { nav.popBackStack() },
                                 ) {
-                                    com.mythara.ui.people.ContactsScreen()
+                                    com.mythara.ui.people.ContactsScreen(
+                                        onOpenContact = { nameKey ->
+                                            nav.navigate(Routes.contactDetail(nameKey)) {
+                                                launchSingleTop = true
+                                            }
+                                        },
+                                    )
+                                }
+                            }
+                            composable(
+                                route = Routes.ContactDetailRoute,
+                                arguments = listOf(
+                                    androidx.navigation.navArgument("nameKey") {
+                                        type = androidx.navigation.NavType.StringType
+                                    },
+                                ),
+                            ) { entry ->
+                                val nk = entry.arguments
+                                    ?.getString("nameKey")
+                                    ?.let { android.net.Uri.decode(it) }
+                                    .orEmpty()
+                                com.mythara.ui.scaffold.MytharaScaffold(
+                                    title = "contact",
+                                    glyph = com.mythara.ui.theme.Glyph.DiamondFilled,
+                                    onBack = { nav.popBackStack() },
+                                ) {
+                                    com.mythara.ui.people.ContactDetailScreen(nameKey = nk)
                                 }
                             }
                             composable(Routes.About) {
@@ -1047,6 +1073,11 @@ object Routes {
      *  captured via notifications, tap to call back, long-press to
      *  open contacts. */
     const val CallLog = "call-log"
+    /** Per-contact detail (interactions / memory / Big Five + action
+     *  chips). Navigates with URL-encoded nameKey as a path segment. */
+    const val ContactDetailRoute = "contact-detail/{nameKey}"
+    fun contactDetail(nameKey: String): String =
+        "contact-detail/${android.net.Uri.encode(nameKey)}"
     /** MiniMax API usage / quota dashboard. */
     const val Usage = "usage"
     /** Dashboard / command center — surfaced from the amulet as a
