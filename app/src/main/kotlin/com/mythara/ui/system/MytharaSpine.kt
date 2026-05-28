@@ -93,6 +93,9 @@ fun MytharaSpine(
     onOpenTriage: () -> Unit = {},
     onOpenAlerts: () -> Unit = {},
     onOpenCalls: () -> Unit = {},
+    /** v7+ — invoked by the "search" affordance in the apps strip
+     *  to open the full searchable app drawer (SpotlightDrawer). */
+    onOpenAppDrawer: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -101,6 +104,25 @@ fun MytharaSpine(
     var appsOpen by remember { mutableStateOf(false) }
 
     Box(modifier = modifier.fillMaxSize()) {
+        // ── Outside-tap scrim — present only when a panel is open.
+        // Transparent (doesn't visually obscure); consumes taps so
+        // anywhere outside the open panel + spine closes both. Drawn
+        // FIRST in the Box so later children (spine bar, rose pip,
+        // panels) sit on top in z-order and still receive their own
+        // taps normally.
+        if (expanded || appsOpen) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(expanded, appsOpen) {
+                        detectTapGestures(onTap = {
+                            expanded = false
+                            appsOpen = false
+                        })
+                    },
+            )
+        }
+
         // ── Breathing spine VISUAL — the 3 dp glow ────────────────
         // Painted across the FULL screen height so the bar looks
         // edge-to-edge against the wallpaper. No gesture handler
@@ -156,10 +178,10 @@ fun MytharaSpine(
                 },
         )
 
-        // Tiny rose pip at the top of the spine — v7+: TOGGLES the
-        // apps-only thin strip (just installed app icons, no Mythara
-        // nav rows). The full launcher (Mythara nav + apps) is still
-        // reachable via the spine itself.
+        // Tiny rose pip at the top of the spine — alternative tap
+        // target for the main menu (same effect as tapping the
+        // spine bar). The rose ROW INSIDE the main menu is what
+        // opens the apps strip.
         Box(
             modifier = Modifier
                 .align(Alignment.TopEnd)
@@ -169,8 +191,8 @@ fun MytharaSpine(
                 .clip(CircleShape)
                 .background(MytharaColors.Charple.copy(alpha = 0.6f))
                 .clickable {
-                    expanded = false
-                    appsOpen = !appsOpen
+                    appsOpen = false
+                    expanded = !expanded
                 },
             contentAlignment = Alignment.Center,
         ) {
@@ -196,6 +218,7 @@ fun MytharaSpine(
         ) {
             LauncherPanel(
                 onCollapse = { expanded = false },
+                onOpenApps = { expanded = false; appsOpen = true },
                 onOpenAboutMe = { expanded = false; onOpenAboutMe() },
                 onOpenPeople = { expanded = false; onOpenPeople() },
                 onOpenMemory = { expanded = false; onOpenMemory() },
@@ -221,33 +244,28 @@ fun MytharaSpine(
             ) + fadeOut(tween(PANEL_CLOSE_MS)),
             modifier = Modifier.align(Alignment.CenterEnd),
         ) {
-            AppsStripPanel(onAfterLaunch = { appsOpen = false })
+            AppsStripPanel(
+                onAfterLaunch = { appsOpen = false },
+                onOpenAppDrawer = { appsOpen = false; onOpenAppDrawer() },
+            )
         }
 
-        // ── Auto-collapse after inactivity ────────────────────────
-        if (expanded) {
-            LaunchedEffect(expanded) {
-                delay(AUTO_COLLAPSE_MS)
-                expanded = false
-            }
-        }
-        if (appsOpen) {
-            LaunchedEffect(appsOpen) {
-                delay(AUTO_COLLAPSE_MS)
-                appsOpen = false
-            }
-        }
     }
 }
 
 /**
- * Thin scrollable strip of installed app icons only. No Mythara nav
- * rows, no headers — just apps. Toggled by tapping the rose pip at
- * the top of the spine. Tap an icon to launch + auto-close the strip.
+ * Thin scrollable strip with a SEARCH affordance at the top followed
+ * by installed app icons. Tapping the search row opens the full
+ * searchable app drawer ([SpotlightDrawer]); tapping an app icon
+ * launches it. Toggled by the rose row inside the main launcher
+ * (and the spine rose pip — same effect as the spine bar tap).
  */
 @Composable
-private fun AppsStripPanel(onAfterLaunch: () -> Unit) {
-    Box(
+private fun AppsStripPanel(
+    onAfterLaunch: () -> Unit,
+    onOpenAppDrawer: () -> Unit,
+) {
+    Column(
         modifier = Modifier
             .windowInsetsPadding(WindowInsets.systemBars)
             .padding(end = (SPINE_WIDTH_DP + 4).dp, top = 8.dp, bottom = 8.dp)
@@ -256,12 +274,38 @@ private fun AppsStripPanel(onAfterLaunch: () -> Unit) {
             .background(MytharaColors.Surface)
             .border(1.dp, MytharaColors.SurfaceHigh, RoundedCornerShape(12.dp))
             .padding(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        // Search row — opens the full app drawer.
+        Box(
+            modifier = Modifier
+                .size(APP_ROW_DP.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(MytharaColors.Charple.copy(alpha = 0.20f))
+                .border(1.dp, MytharaColors.Charple.copy(alpha = 0.50f), RoundedCornerShape(14.dp))
+                .clickable(onClick = onOpenAppDrawer),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "⌕",
+                color = MytharaColors.Charple,
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+            )
+        }
+        // Hairline below the search affordance.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(MytharaColors.SurfaceHigh.copy(alpha = 0.55f)),
+        )
         com.mythara.ui.launcher.AppDock(onLaunch = { onAfterLaunch() })
     }
 }
 
 private const val APPS_STRIP_WIDTH_DP = 76
+private const val APP_ROW_DP = 44
 
 /**
  * The panel that slides out when the user taps the spine. A
@@ -271,6 +315,7 @@ private const val APPS_STRIP_WIDTH_DP = 76
 @Composable
 private fun LauncherPanel(
     onCollapse: () -> Unit,
+    onOpenApps: () -> Unit,
     onOpenAboutMe: () -> Unit,
     onOpenPeople: () -> Unit,
     onOpenMemory: () -> Unit,
@@ -291,12 +336,12 @@ private fun LauncherPanel(
             .border(1.dp, MytharaColors.SurfaceHigh, RoundedCornerShape(12.dp))
             .padding(10.dp),
     ) {
-        // v7 P7+ — outer column NO LONGER has its own verticalScroll;
-        // the AppDock below scrolls internally (bounded height) and
-        // Compose throws "Nested scrolling not supported" if both
-        // scroll. The nav rows below the dock are a fixed count so
-        // the total panel height fits without needing outer scroll.
+        // v7+ — vertically scrollable spine menu: ROSE at the top
+        // (opens the apps strip) + the Mythara nav rows below. No
+        // embedded app dock in the main menu anymore; the apps live
+        // in the slim strip that the rose pivots to.
         Column(
+            modifier = Modifier.verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Row(
@@ -305,7 +350,7 @@ private fun LauncherPanel(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "${Glyph.DiamondOutline} launcher",
+                    text = "${Glyph.DiamondOutline} mythara",
                     color = MytharaColors.Charple,
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                 )
@@ -314,20 +359,8 @@ private fun LauncherPanel(
                 }
             }
             Spacer(modifier = Modifier.height(2.dp))
-            // v7 P6 — macOS-style magnifying app dock at the top of
-            // the launcher panel. Tap an icon to launch the app; while
-            // dragging across the dock, icons near the touch grow with
-            // a Gaussian fisheye scaler.
-            com.mythara.ui.launcher.AppDock(
-                onLaunch = { onCollapse() },
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = "${Glyph.AccentBar} mythara",
-                color = MytharaColors.FgMute,
-                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                modifier = Modifier.padding(start = 4.dp, top = 2.dp, bottom = 2.dp),
-            )
+            // Rose row — tap → opens the apps strip (search + icons).
+            LauncherEntry("apps", "◆", onOpenApps)
             LauncherEntry("me", "🙂", onOpenAboutMe)
             LauncherEntry("people", "●", onOpenPeople)
             LauncherEntry("memory", "┃", onOpenMemory)

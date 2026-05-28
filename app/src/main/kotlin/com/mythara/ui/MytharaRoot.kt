@@ -919,6 +919,7 @@ fun MytharaRoot(
                         onOpenTriage = { nav.navigate(Routes.Triage) { launchSingleTop = true } },
                         onOpenAlerts = { nav.navigate(Routes.NotifHub) { launchSingleTop = true } },
                         onOpenCalls = { nav.navigate(Routes.CallLog) { launchSingleTop = true } },
+                        onOpenAppDrawer = { spotlightOpen = true },
                     )
 
                     } // end inner Box (layout + overlays)
